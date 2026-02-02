@@ -187,6 +187,11 @@ struct TaskStorageSchema {
     #[field(storage = "flag", category = "transient")]
     stateful: bool,
 
+    /// Whether this task is new and needs its type persisted to the task cache.
+    /// Set when task is created, cleared after persisting.
+    #[field(storage = "flag", category = "transient")]
+    pub new_persistent_task: bool,
+
     // =========================================================================
     // CHILDREN & AGGREGATION (meta)
     // =========================================================================

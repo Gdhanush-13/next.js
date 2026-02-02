@@ -723,6 +723,30 @@ pub trait TaskGuard: Debug + TaskStorageAccessors {
         new_value
     }
 
+    /// Initialize a new persistent task with the given task type.
+    ///
+    /// Note: track_modification_internal early-returns when persistent_task_type
+    /// is None, so any modifications before set_persistent_task_type are no-ops.
+    /// This ensures the task is only added to the modified list once the task_type
+    /// is set and a snapshot copy would include it.
+    fn init_new_persistent_task(&mut self, task_type: Arc<CachedTaskType>) {
+        let flags = &mut self.typed_mut().flags;
+        // mark as `new` so it gets written to the task cache
+        flags.set_new_persistent_task(true);
+        // mark as restored so we don't do db queries for it
+        flags.set_restored(TaskDataCategory::All);
+        // Set the task type directly on the storage, bypassing the generated setter
+        // which would call track_modification before the field is set (causing an
+        // early return since persistent_task_type is still None). We then explicitly
+        // track both categories after the field is set.
+        self.typed_mut().set_persistent_task_type(task_type);
+        self.track_modification(SpecificTaskDataCategory::Data, "init_persistent_task");
+        // Calling track_modification for Meta is potentially wasteful, but it would be unusual to
+        // have data with no meta, so we can eagerly set this and at worst serialized a very small
+        // bit of data in the Meta table.
+        self.track_modification(SpecificTaskDataCategory::Meta, "init_persistent_task");
+    }
+
     fn invalidate_serialization(&mut self);
     /// Determine which tasks to prefetch for a task.
     /// Only returns Some once per task.
