@@ -1145,5 +1145,16 @@
   "1144": "Prefetch inlining is enabled but no hints were found for route \"%s\". This is a bug in the Next.js build pipeline — prefetch-hints.json should contain an entry for every route that produces segment data.",
   "1145": "Internal Next.js Error: Prefetch inlining is enabled but no hints were found for route \"%s\". prefetch-hints.json should contain an entry for every route that produces segment data. This is a bug in Next.js.",
   "1146": "Internal Next.js Error: Prefetch inlining is enabled but no hint tree was provided during incremental static revalidation. The prefetch-hints.json manifest should contain an entry for this route. This is a bug in Next.js.",
-  "1147": "Turbopack database compaction is not supported on this platform"
+  "1147": "Turbopack database compaction is not supported on this platform",
+  "1148": "Worker pool is ending, no more calls can be made",
+  "1149": "Worker exited with code %s%s",
+  "1150": "This file must be run as a worker thread",
+  "1151": "Worker pool closed",
+  "1152": "Child can only be used on a forked process",
+  "1153": "Error when calling setup: %s",
+  "1154": "Worker pool ended before task could be processed",
+  "1155": "\"null\" or \"undefined\" thrown",
+  "1156": "Unexpected request from parent process: %s",
+  "1157": "Worker exited unexpectedly with code %s, signal %s",
+  "1158": "Worker restarted due to timeout"
 }
