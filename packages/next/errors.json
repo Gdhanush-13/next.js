@@ -1161,5 +1161,6 @@
   "1160": "Worker exited during shutdown",
   "1161": "Worker pool ended while requests were in-flight",
   "1162": "Worker is ended, no more calls can be done to it",
-  "1163": "Export encountered an error on %s, exiting the build."
+  "1163": "Export encountered an error on %s, exiting the build.",
+  "1164": "Worker timed out"
 }
