@@ -8935,7 +8935,7 @@ dependencies = [
  "napi",
  "napi-derive",
  "once_cell",
- "swc_plugin_runner",
+ "swc_plugin_runner 25.0.0",
 ]
 
 [[package]]
