@@ -44,8 +44,9 @@ export const wasmManager = {
   compileModule(wasmBytes: Buffer): number {
     const id = nextId++
     // WebAssembly.Module() is synchronous in Node.js (no size limit unlike
-    // browsers).
-    const module = new WebAssembly.Module(wasmBytes)
+    // browsers).  Use the underlying ArrayBuffer to satisfy TypeScript's
+    // BufferSource constraint (Buffer's .buffer may be SharedArrayBuffer).
+    const module = new WebAssembly.Module(wasmBytes as Uint8Array<ArrayBuffer>)
     modules.set(id, { module })
     return id
   },
