@@ -3894,7 +3894,7 @@ export default async function build(
       // When output: export we want to end the worker later as it's still used for writeFullyStaticExport
       if (config.output !== 'export') {
         // ensure the worker is not left hanging
-        staticWorker?.end()
+        staticWorker?.shutdown()
         staticWorker = undefined! // Reset staticWorker to make sure it does not end in `finally`
       }
 
@@ -4107,7 +4107,7 @@ export default async function build(
       if (config.output === 'export') {
         // TODO: When writeFullyStaticExport doesn't fail when staticWorker is passed moved this after writeFullyStaticExport.
         // End the worker here when it's output: export.
-        staticWorker.end()
+        staticWorker.shutdown()
         staticWorker = undefined! // Reset staticWorker to make sure it does not end in `finally`
 
         await nextBuildSpan
@@ -4266,7 +4266,7 @@ export default async function build(
   } finally {
     // @ts-expect-error Existence of staticWorker is checked here intentionally.
     if (staticWorker) {
-      staticWorker.end()
+      staticWorker.shutdown()
     }
     // Ensure we wait for lockfile patching if present
     await lockfilePatchPromise.cur

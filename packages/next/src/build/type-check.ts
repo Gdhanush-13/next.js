@@ -75,7 +75,7 @@ function verifyAndRunTypeScript(
     debugBuildPaths,
   })
     .then((result) => {
-      typeCheckWorker?.end()
+      typeCheckWorker?.shutdown()
       return result
     })
     .catch(() => {
