@@ -1346,7 +1346,6 @@ fn export_value_to_import_mapping(
                 )
             }
             ReplacedSubpathValueResultType::Empty => Some(ImportMapping::Empty.resolved_cell()),
-            ReplacedSubpathValueResultType::Excluded => None,
         })
         .collect();
 
