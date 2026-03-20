@@ -66,7 +66,7 @@ use crate::{
     backing_storage::{BackingStorage, SnapshotItem},
     data::{
         ActivenessState, CellRef, CollectibleRef, CollectiblesRef, Dirtyness, InProgressCellState,
-        InProgressState, InProgressStateInner, OutputValue, TransientTask, TtlDeadline,
+        InProgressState, InProgressStateInner, OutputValue, TransientTask,
     },
     error::TaskError,
     utils::{
@@ -1901,7 +1901,7 @@ impl<B: BackingStorage> TurboTasksBackendInner<B> {
             }
         }
 
-        let (span, future, is_session_dependent) = match task_type {
+        let (span, future) = match task_type {
             TaskType::Cached(task_type) => {
                 let CachedTaskType {
                     native_fn,
@@ -1911,7 +1911,6 @@ impl<B: BackingStorage> TurboTasksBackendInner<B> {
                 (
                     native_fn.span(task_id.persistence(), execution_reason, priority),
                     native_fn.execute(*this, &**arg),
-                    native_fn.is_session_dependent,
                 )
             }
             TaskType::Transient(task_type) => {
@@ -1920,14 +1919,10 @@ impl<B: BackingStorage> TurboTasksBackendInner<B> {
                     TransientTask::Root(f) => f(),
                     TransientTask::Once(future_mutex) => take(&mut *future_mutex.lock())?,
                 };
-                (span, future, false)
+                (span, future)
             }
         };
-        Some(TaskExecutionSpec {
-            future,
-            span,
-            is_session_dependent,
-        })
+        Some(TaskExecutionSpec { future, span })
     }
 
     fn task_execution_completed(
@@ -1937,7 +1932,6 @@ impl<B: BackingStorage> TurboTasksBackendInner<B> {
         cell_counters: &AutoMap<ValueTypeId, u32, BuildHasherDefault<FxHasher>, 8>,
         #[cfg(feature = "verify_determinism")] stateful: bool,
         has_invalidator: bool,
-        ttl: Option<std::time::Duration>,
         turbo_tasks: &dyn TurboTasksBackendApi<TurboTasksBackend<B>>,
     ) -> bool {
         // Task completion is a 4 step process:
@@ -2045,7 +2039,6 @@ impl<B: BackingStorage> TurboTasksBackendInner<B> {
             no_output_set,
             new_output,
             is_now_immutable,
-            ttl,
         );
         if stale {
             // Task was stale and has been rescheduled
@@ -2508,7 +2501,6 @@ impl<B: BackingStorage> TurboTasksBackendInner<B> {
         #[cfg(feature = "verify_determinism")] no_output_set: bool,
         new_output: Option<OutputValue>,
         is_now_immutable: bool,
-        ttl: Option<std::time::Duration>,
     ) -> (
         bool,
         Option<
@@ -2570,7 +2562,7 @@ impl<B: BackingStorage> TurboTasksBackendInner<B> {
         let (old_self_dirty, old_current_session_self_clean) = match old_dirtyness {
             None => (false, false),
             Some(Dirtyness::Dirty(_)) => (true, false),
-            Some(Dirtyness::SessionDependent | Dirtyness::SessionDependentTtl(_)) => {
+            Some(Dirtyness::SessionDependent) => {
                 let clean_in_current_session = task.current_session_clean();
                 (true, clean_in_current_session)
             }
@@ -2579,18 +2571,7 @@ impl<B: BackingStorage> TurboTasksBackendInner<B> {
         // Compute the new dirty state
         let session_dependent = task.is_session_dependent();
         let (new_dirtyness, new_self_dirty, new_current_session_self_clean) = if session_dependent {
-            if let Some(ttl_duration) = ttl {
-                let deadline = std::time::SystemTime::now() + ttl_duration;
-                (
-                    Some(Dirtyness::SessionDependentTtl(
-                        TtlDeadline::from_system_time(deadline),
-                    )),
-                    true,
-                    true,
-                )
-            } else {
-                (Some(Dirtyness::SessionDependent), true, true)
-            }
+            (Some(Dirtyness::SessionDependent), true, true)
         } else {
             (None, false, false)
         };
@@ -3451,7 +3432,6 @@ impl<B: BackingStorage> Backend for TurboTasksBackend<B> {
         cell_counters: &AutoMap<ValueTypeId, u32, BuildHasherDefault<FxHasher>, 8>,
         #[cfg(feature = "verify_determinism")] stateful: bool,
         has_invalidator: bool,
-        ttl: Option<std::time::Duration>,
         turbo_tasks: &dyn TurboTasksBackendApi<Self>,
     ) -> bool {
         self.0.task_execution_completed(
@@ -3461,7 +3441,6 @@ impl<B: BackingStorage> Backend for TurboTasksBackend<B> {
             #[cfg(feature = "verify_determinism")]
             stateful,
             has_invalidator,
-            ttl,
             turbo_tasks,
         )
     }
