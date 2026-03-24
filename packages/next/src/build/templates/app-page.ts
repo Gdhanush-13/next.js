@@ -1,8 +1,6 @@
 import type { LoaderTree } from '../../server/lib/app-dir-module'
 
-import {
-  AppPageRouteModule,
-} from '../../server/route-modules/app-page/module.compiled' with { 'turbopack-transition': 'next-ssr' }
+import { AppPageRouteModule } from '../../server/route-modules/app-page/module.compiled' with { 'turbopack-transition': 'next-ssr' }
 
 import { RouteKind } from '../../server/route-kind' with { 'turbopack-transition': 'next-server-utility' }
 
@@ -17,19 +15,9 @@ import {
 export * from '../../server/app-render/entry-base' with { 'turbopack-transition': 'next-server-utility' }
 
 // These are injected by the loader afterwards.
-
-/**
- * The tree created in next-app-loader that holds component segments and modules
- * and I've updated it.
- */
 declare const tree: LoaderTree
-
-// These are injected by the loader afterwards.
 declare const __next_app_require__: (id: string | number) => unknown
 declare const __next_app_load_chunk__: (id: string | number) => Promise<unknown>
-
-// We inject the tree and pages here so that we can use them in the route
-// module.
 // INJECT:tree
 // INJECT:__next_app_require__
 // INJECT:__next_app_load_chunk__
