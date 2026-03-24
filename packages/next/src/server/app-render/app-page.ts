@@ -620,6 +620,7 @@ export function createHandler(
       ...moduleEntryBase,
       buildDynamicSegmentPlaceholder,
       buildCompletedShellCacheKey,
+      interopDefault,
       tree,
       handler,
       routeModule,
