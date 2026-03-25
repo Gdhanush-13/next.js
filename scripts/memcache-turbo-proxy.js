@@ -41,8 +41,12 @@ function extractKey(urlPath) {
 
 function turboFetch(method, key, body) {
   return new Promise((resolve, reject) => {
-    // Turbo cache API: /v8/artifacts/{key} with Bearer auth, no teamId param
-    const turboPath = `/v8/artifacts/${encodeURIComponent(key)}`
+    // Turbo cache API: /v8/artifacts/{key} with Bearer auth
+    // Self-hosted turbo servers may require teamId; vercel.com does not.
+    const teamParam = TURBO_TEAM
+      ? `?teamId=${encodeURIComponent(TURBO_TEAM)}`
+      : ''
+    const turboPath = `/v8/artifacts/${encodeURIComponent(key)}${teamParam}`
     const parsed = new URL(turboPath, TURBO_API)
     const opts = {
       hostname: parsed.hostname,
@@ -166,11 +170,13 @@ const server = http.createServer(async (req, res) => {
 })
 
 async function main() {
-  const ok = await healthCheck()
-  if (!ok) {
-    process.exit(1)
+  // --test mode: verify turbo API connectivity and exit
+  if (process.argv.includes('--test')) {
+    const ok = await healthCheck()
+    process.exit(ok ? 0 : 1)
   }
 
+  // Normal mode: start listening immediately
   server.listen(PORT, '127.0.0.1', () => {
     console.log(
       `sccache-turbo-proxy (WebDAV) listening on http://127.0.0.1:${PORT}`

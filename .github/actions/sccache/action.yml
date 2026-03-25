@@ -21,10 +21,14 @@ runs:
       if: ${{ inputs.mode == 'start' }}
       shell: bash
       run: |
+        # Verify turbo API connectivity before starting
+        node scripts/memcache-turbo-proxy.js --test
+
+        # Start proxy in background
         node scripts/memcache-turbo-proxy.js &
         echo $! > ${RUNNER_TEMP}/sccache-turbo-proxy.pid
 
-        # Wait for proxy to be ready
+        # Wait for proxy to be listening
         for i in 1 2 3 4 5; do
           curl -sf http://127.0.0.1:${SCCACHE_TURBO_PROXY_PORT:-18080}/ -o /dev/null --max-time 2 && break
           sleep 1
