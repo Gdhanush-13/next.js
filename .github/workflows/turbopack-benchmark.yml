@@ -63,6 +63,11 @@ jobs:
           run: cargo codspeed run -p turbopack-cli small_apps
           token: ${{ secrets.CODSPEED_TOKEN }}
 
+      - uses: ./.github/actions/sccache
+        if: always()
+        with:
+          mode: stop
+
   benchmark-analyzer:
     name: Benchmark Rust Crates (analyzer)
     runs-on: ['self-hosted', 'linux', 'x64', 'metal']
@@ -99,6 +104,11 @@ jobs:
           mode: instrumentation
           run: cargo codspeed run -p turbopack-ecmascript references
           token: ${{ secrets.CODSPEED_TOKEN }}
+
+      - uses: ./.github/actions/sccache
+        if: always()
+        with:
+          mode: stop
 
   benchmark-large:
     name: Benchmark Rust Crates (large)

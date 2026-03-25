@@ -71,3 +71,8 @@ jobs:
         timeout-minutes: 120
         run: |
           cargo test --benches --release -p turbopack-bench
+
+      - uses: ./.github/actions/sccache
+        if: always()
+        with:
+          mode: stop
