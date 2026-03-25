@@ -177,10 +177,6 @@ struct TurboTasksBackendInner<B: BackingStorage> {
 
     storage: Storage,
 
-    /// When true, the backing_storage has data that is not in the local storage.
-    /// This is determined once at startup and never changes.
-    local_is_partial: bool,
-
     /// Number of executing operations + Highest bit is set when snapshot is
     /// requested. When that bit is set, operations should pause until the
     /// snapshot is completed. When the bit is set and in progress counter
@@ -249,7 +245,6 @@ impl<B: BackingStorage> TurboTasksBackendInner<B> {
                 TaskId::MAX,
             ),
             task_cache: FxDashMap::default(),
-            local_is_partial: next_task_id != TaskId::MIN,
             storage: Storage::new(shard_amount, small_preallocation),
             in_progress_operations: AtomicUsize::new(0),
             snapshot_request: Mutex::new(SnapshotRequest::new()),
