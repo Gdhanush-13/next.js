@@ -16,7 +16,9 @@ const TURBO_API = process.env.TURBO_API || 'https://vercel.com'
 const TURBO_TOKEN = process.env.TURBO_TOKEN
 const TURBO_TEAM = process.env.TURBO_TEAM || 'vercel'
 const PORT = parseInt(process.env.SCCACHE_TURBO_PROXY_PORT || '18080', 10)
-const LOG_FILE = '/tmp/sccache-turbo-proxy.log'
+const os = require('os')
+const tmpDir = process.env.RUNNER_TEMP || os.tmpdir()
+const LOG_FILE = require('path').join(tmpDir, 'sccache-turbo-proxy.log')
 
 if (!TURBO_TOKEN) {
   console.error('TURBO_TOKEN is required')

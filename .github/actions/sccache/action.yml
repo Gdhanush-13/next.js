@@ -22,7 +22,13 @@ runs:
       shell: bash
       run: |
         node scripts/memcache-turbo-proxy.js &
-        echo $! > /tmp/sccache-turbo-proxy.pid
+        echo $! > ${RUNNER_TEMP}/sccache-turbo-proxy.pid
+
+        # Wait for proxy to be ready
+        for i in 1 2 3 4 5; do
+          curl -sf http://127.0.0.1:${SCCACHE_TURBO_PROXY_PORT:-18080}/ -o /dev/null --max-time 2 && break
+          sleep 1
+        done
 
         echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
         echo "SCCACHE_WEBDAV_ENDPOINT=http://127.0.0.1:${SCCACHE_TURBO_PROXY_PORT:-18080}" >> $GITHUB_ENV
@@ -47,13 +53,13 @@ runs:
         sccache --stop-server 2>/dev/null || true
 
         # Stop the proxy (sends SIGTERM which triggers log dump)
-        if [ -f /tmp/sccache-turbo-proxy.pid ]; then
-          kill $(cat /tmp/sccache-turbo-proxy.pid) 2>/dev/null || true
+        if [ -f ${RUNNER_TEMP}/sccache-turbo-proxy.pid ]; then
+          kill $(cat ${RUNNER_TEMP}/sccache-turbo-proxy.pid) 2>/dev/null || true
           sleep 1
-          rm -f /tmp/sccache-turbo-proxy.pid
+          rm -f ${RUNNER_TEMP}/sccache-turbo-proxy.pid
         fi
         # Show proxy log
-        if [ -f /tmp/sccache-turbo-proxy.log ]; then
+        if [ -f ${RUNNER_TEMP}/sccache-turbo-proxy.log ]; then
           echo "=== sccache-turbo-proxy log (last 50) ==="
-          tail -50 /tmp/sccache-turbo-proxy.log
+          tail -50 ${RUNNER_TEMP}/sccache-turbo-proxy.log
         fi
