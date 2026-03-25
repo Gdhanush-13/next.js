@@ -17,27 +17,26 @@ runs:
       with:
         tool: sccache@0.14.0
 
-    - name: Start sccache proxy + server
+    - name: Configure sccache env + start proxy
       if: ${{ inputs.mode == 'start' }}
       shell: bash
       run: |
-        # Start the WebDAV→Turbo proxy
         node scripts/memcache-turbo-proxy.js &
         echo $! > /tmp/sccache-turbo-proxy.pid
-        sleep 1
 
-        # Configure sccache to use the proxy
-        SCCACHE_BASE_DIR="${{ inputs.base-dir || github.workspace }}"
         echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
         echo "SCCACHE_WEBDAV_ENDPOINT=http://127.0.0.1:${SCCACHE_TURBO_PROXY_PORT:-18080}" >> $GITHUB_ENV
         echo "SCCACHE_WEBDAV_KEY_PREFIX=sccache-v1" >> $GITHUB_ENV
-        echo "SCCACHE_BASE_DIR=${SCCACHE_BASE_DIR}" >> $GITHUB_ENV
+        echo "SCCACHE_BASE_DIR=${{ inputs.base-dir || github.workspace }}" >> $GITHUB_ENV
         echo "CARGO_INCREMENTAL=0" >> $GITHUB_ENV
         echo "SCCACHE_IDLE_TIMEOUT=0" >> $GITHUB_ENV
 
-        # Start sccache server
+    - name: Start sccache server
+      if: ${{ inputs.mode == 'start' }}
+      shell: bash
+      run: |
         sccache --start-server 2>&1 || echo "sccache server may already be running"
-        echo "sccache started with WebDAV→Turbo proxy"
+        sccache --show-stats 2>&1 | grep "Cache location"
 
     - name: Stop sccache + show stats
       if: ${{ inputs.mode == 'stop' }}
@@ -47,7 +46,6 @@ runs:
         sccache --show-stats || true
         sccache --stop-server 2>/dev/null || true
 
-        # Stop the proxy
         if [ -f /tmp/sccache-turbo-proxy.pid ]; then
           kill $(cat /tmp/sccache-turbo-proxy.pid) 2>/dev/null || true
           rm -f /tmp/sccache-turbo-proxy.pid
