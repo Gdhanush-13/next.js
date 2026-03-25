@@ -34,7 +34,6 @@ runs:
         echo "SCCACHE_BASE_DIR=${SCCACHE_BASE_DIR}" >> $GITHUB_ENV
         echo "CARGO_INCREMENTAL=0" >> $GITHUB_ENV
         echo "SCCACHE_IDLE_TIMEOUT=0" >> $GITHUB_ENV
-        echo "SCCACHE_DIRECT=false" >> $GITHUB_ENV
 
         # Start sccache server
         sccache --start-server 2>&1 || echo "sccache server may already be running"

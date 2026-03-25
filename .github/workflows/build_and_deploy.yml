@@ -274,7 +274,6 @@ jobs:
             -e SCCACHE_WEBDAV_ENDPOINT=http://127.0.0.1:${SCCACHE_TURBO_PROXY_PORT:-18080} \
             -e SCCACHE_WEBDAV_KEY_PREFIX=sccache-v1 \
             -e SCCACHE_BASE_DIR=/build \
-            -e SCCACHE_DIRECT=false \
             -e SCCACHE_IDLE_TIMEOUT=0 \
             -v ${{ env.HOME }}/.cargo/git:/root/.cargo/git \
             -v ${{ env.HOME }}/.cargo/registry:/root/.cargo/registry \
