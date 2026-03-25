@@ -42,11 +42,11 @@ function extractKey(urlPath) {
 function turboFetch(method, key, body) {
   return new Promise((resolve, reject) => {
     // Turbo cache API: /v8/artifacts/{key} with Bearer auth
-    // Self-hosted turbo servers may require teamId; vercel.com does not.
-    const teamParam = TURBO_TEAM
-      ? `?teamId=${encodeURIComponent(TURBO_TEAM)}`
+    // Include both teamId and slug for compatibility with vercel.com and self-hosted servers.
+    const params = TURBO_TEAM
+      ? `?teamId=${encodeURIComponent(TURBO_TEAM)}&slug=${encodeURIComponent(TURBO_TEAM)}`
       : ''
-    const turboPath = `/v8/artifacts/${encodeURIComponent(key)}${teamParam}`
+    const turboPath = `/v8/artifacts/${encodeURIComponent(key)}${params}`
     const parsed = new URL(turboPath, TURBO_API)
     const opts = {
       hostname: parsed.hostname,
