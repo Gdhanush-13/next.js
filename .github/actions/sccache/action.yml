@@ -1,0 +1,48 @@
+name: 'sccache with Turbo Cache'
+description: 'Start sccache with a WebDAV→Turbo proxy for per-crate Rust compilation caching. Call with mode=start before builds and mode=stop after.'
+inputs:
+  mode:
+    description: '"start" to launch proxy + sccache, "stop" to print stats and shut down'
+    required: true
+  base-dir:
+    description: 'SCCACHE_BASE_DIR for path normalization (default: $GITHUB_WORKSPACE)'
+    required: false
+    default: ''
+runs:
+  using: 'composite'
+  steps:
+    - name: Start sccache proxy + server
+      if: ${{ inputs.mode == 'start' }}
+      shell: bash
+      run: |
+        # Start the WebDAV→Turbo proxy
+        node scripts/memcache-turbo-proxy.js &
+        echo $! > /tmp/sccache-turbo-proxy.pid
+        sleep 1
+
+        # Configure sccache to use the proxy
+        SCCACHE_BASE_DIR="${{ inputs.base-dir || github.workspace }}"
+        echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+        echo "SCCACHE_WEBDAV_ENDPOINT=http://127.0.0.1:${SCCACHE_TURBO_PROXY_PORT:-18080}" >> $GITHUB_ENV
+        echo "SCCACHE_WEBDAV_KEY_PREFIX=sccache-v1" >> $GITHUB_ENV
+        echo "SCCACHE_BASE_DIR=${SCCACHE_BASE_DIR}" >> $GITHUB_ENV
+        echo "CARGO_INCREMENTAL=0" >> $GITHUB_ENV
+        echo "SCCACHE_IDLE_TIMEOUT=0" >> $GITHUB_ENV
+
+        # Start sccache server
+        sccache --start-server 2>&1 || echo "sccache server may already be running"
+        echo "sccache started with WebDAV→Turbo proxy"
+
+    - name: Stop sccache + show stats
+      if: ${{ inputs.mode == 'stop' }}
+      shell: bash
+      run: |
+        echo "=== sccache stats ==="
+        sccache --show-stats || true
+        sccache --stop-server 2>/dev/null || true
+
+        # Stop the proxy
+        if [ -f /tmp/sccache-turbo-proxy.pid ]; then
+          kill $(cat /tmp/sccache-turbo-proxy.pid) 2>/dev/null || true
+          rm -f /tmp/sccache-turbo-proxy.pid
+        fi
