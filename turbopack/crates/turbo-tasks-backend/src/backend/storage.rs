@@ -64,18 +64,13 @@ impl SpecificTaskDataCategory {
     }
 }
 
-/// Number of shards for the snapshots map. This is intentionally small since:
-/// 1. Snapshots are rare (only during dev mode idle-callback persistence races)
-/// 2. We're otherwise saturating the CPU doing persistence, so lock contention here doesn't matter.
-/// 3. We want to minimize fixed overhead from sharding
-const SNAPSHOT_SHARDS: usize = 16;
-
 pub struct Storage {
     snapshot_mode: AtomicBool,
     /// Approximate count of tasks with modified flags set. Incremented when a task transitions
-    /// from unmodified to modified, decremented when flags are cleared during snapshot iteration.
-    /// Used to short-circuit snapshot_and_persist when there's nothing to do, avoiding an
-    /// expensive O(N) scan of the entire map.
+    /// from unmodified to modified (outside snapshot mode). Reset to zero when snapshot mode
+    /// begins, and re-incremented in `end_snapshot` for tasks that still have modifications
+    /// (promoted from `modified_during_snapshot`). Used to short-circuit `snapshot_and_persist`
+    /// when there's nothing to do, avoiding an expensive O(N) scan of the entire map.
     modified_count: AtomicU64,
     /// Stores snapshots of task state for tasks accessed during snapshot mode.
     /// - `Some(snapshot)`: Task was modified before snapshot mode and accessed again during it.
@@ -100,7 +95,7 @@ impl Storage {
             snapshots: FxDashMap::with_capacity_and_hasher_and_shard_amount(
                 0,
                 Default::default(),
-                SNAPSHOT_SHARDS,
+                shard_amount,
             ),
             map: FxDashMap::with_capacity_and_hasher_and_shard_amount(
                 map_capacity,
@@ -194,7 +189,13 @@ impl Storage {
     }
 
     /// Start snapshot mode.
+    ///
+    /// Resets `modified_count` to zero. The count is only used to short-circuit
+    /// *before* entering snapshot mode, so it doesn't need to be accurate during
+    /// a snapshot. `end_snapshot` will re-increment it for any tasks that still
+    /// have modifications after the snapshot completes.
     pub fn start_snapshot(&self) {
+        self.modified_count.store(0, Ordering::Relaxed);
         self.snapshot_mode.store(true, Ordering::Release);
     }
 
@@ -215,18 +216,26 @@ impl Storage {
 
         // Promote modified_during_snapshot → modified for tasks that had snapshots.
         // The snapshots map should be small (only tasks concurrently accessed during snapshot
-        // mode).
-        parallel::try_for_each(self.snapshots.shards(), |shard| {
+        // mode). Accumulate the count locally per shard and do one atomic add at the end.
+        let promoted_counts: Vec<u64> = parallel::map_collect(self.snapshots.shards(), |shard| {
             let mut shard_guard = shard.write();
+            let mut promoted_count: u64 = 0;
             for (key, _) in shard_guard.drain() {
                 if let Some(mut inner) = self.map.get_mut(&key) {
+                    let mut promoted = false;
+                    let already_modified = inner.flags.any_modified();
                     if inner.flags.meta_modified_during_snapshot() {
                         inner.flags.set_meta_modified_during_snapshot(false);
                         inner.flags.set_meta_modified(true);
+                        promoted = true;
                     }
                     if inner.flags.data_modified_during_snapshot() {
                         inner.flags.set_data_modified_during_snapshot(false);
                         inner.flags.set_data_modified(true);
+                        promoted = true;
+                    }
+                    if !already_modified && promoted {
+                        promoted_count += 1;
                     }
                 }
             }
@@ -238,9 +247,13 @@ impl Storage {
             }
             // Safety: shard_guard must outlive the iterator.
             drop(shard_guard);
-            anyhow::Ok(())
-        })
-        .expect("unfailable");
+            promoted_count
+        });
+        let total_promoted: u64 = promoted_counts.into_iter().sum();
+        if total_promoted > 0 {
+            self.modified_count
+                .fetch_add(total_promoted, Ordering::Relaxed);
+        }
     }
 
     /// Returns true if actively snapshotting (modifications should go to snapshots map).
@@ -321,10 +334,9 @@ impl StorageWriteGuard<'_> {
         if flags.is_modified_during_snapshot(category) {
             return;
         }
-        let modified = flags.is_modified(category);
         #[cfg(feature = "trace_task_modification")]
         let _span = (!modified).then(|| tracing::trace_span!("mark_modified", name).entered());
-        match (self.storage.snapshot_mode(), modified) {
+        match (self.storage.snapshot_mode(), flags.is_modified(category)) {
             (false, false) => {
                 // Not in snapshot mode and item is unmodified
                 if !flags.any_modified() {
@@ -508,10 +520,6 @@ where
                 inner.flags.set_data_modified(false);
                 inner.flags.set_meta_modified(false);
                 inner.flags.set_new_persistent_task(false);
-                self.shard
-                    .storage
-                    .modified_count
-                    .fetch_sub(1, Ordering::Relaxed);
                 if !item.is_empty() {
                     return Some(item);
                 }
@@ -521,6 +529,7 @@ where
                 // Promote modified_during_snapshot → modified so the task stays dirty
                 // for the next snapshot cycle (the original has diverged from what
                 // we're about to persist). Clear the _during_snapshot flags.
+                debug_assert!(!inner.flags.any_modified(), "cannot already be modified");
                 if inner.flags.meta_modified_during_snapshot() {
                     inner.flags.set_meta_modified_during_snapshot(false);
                     inner.flags.set_meta_modified(true);
@@ -529,6 +538,12 @@ where
                     inner.flags.set_data_modified_during_snapshot(false);
                     inner.flags.set_data_modified(true);
                 }
+                // This task still has modifications for the next snapshot cycle.
+                // modified_count was reset to 0 at start_snapshot, so re-count it.
+                self.shard
+                    .storage
+                    .modified_count
+                    .fetch_add(1, Ordering::Relaxed);
                 drop(inner);
 
                 // Take the snapshot and remove from the snapshots map so

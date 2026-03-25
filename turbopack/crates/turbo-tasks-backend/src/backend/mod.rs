@@ -1171,7 +1171,7 @@ impl<B: BackingStorage> TurboTasksBackendInner<B> {
                 Some(compute_task_type_hash(
                     inner
                         .get_persistent_task_type()
-                        .expect("if new_persistent_task is set the the task_type must also be set"),
+                        .expect("if new_persistent_task is set the task_type must also be set"),
                 ))
             } else {
                 None
@@ -1193,7 +1193,8 @@ impl<B: BackingStorage> TurboTasksBackendInner<B> {
         let task_count = task_snapshots.len();
 
         if task_snapshots.is_empty() {
-            // TODO: is this even possible?
+            // This is only possible if the `modified_count` and actual modifications get out of
+            // sync with each other.
             return Some((snapshot_time, false));
         }
 
