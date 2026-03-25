@@ -540,7 +540,7 @@ mod tests {
 
         // Write all entries in a single batch with flush (like save_snapshot does)
         {
-            let db = TurboKeyValueDatabase::new(path.to_path_buf(), false, true)?;
+            let db = TurboKeyValueDatabase::new(path.to_path_buf(), false, true, false)?;
             let batch = db.write_batch()?;
 
             for (hash, task_id) in hashes.iter().zip(task_ids.iter()) {
@@ -559,7 +559,7 @@ mod tests {
 
         // Reopen and verify all entries are readable
         {
-            let db = TurboKeyValueDatabase::new(path.to_path_buf(), false, true)?;
+            let db = TurboKeyValueDatabase::new(path.to_path_buf(), false, true, false)?;
             let mut found = 0;
             let mut missing = 0;
             for (hash, expected_id) in hashes.iter().zip(task_ids.iter()) {

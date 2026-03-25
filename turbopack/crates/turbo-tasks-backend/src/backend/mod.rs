@@ -1004,6 +1004,12 @@ impl<B: BackingStorage> TurboTasksBackendInner<B> {
         let wall_start = SystemTime::now();
         debug_assert!(self.should_persist());
 
+        // Short-circuit if no tasks have been modified since the last snapshot.
+        // This avoids the expensive O(N) scan of the entire storage map.
+        if self.storage.modified_count() == 0 {
+            return Some((start, false));
+        }
+
         let suspended_operations;
         {
             let _span = tracing::info_span!("blocking").entered();
@@ -1187,6 +1193,7 @@ impl<B: BackingStorage> TurboTasksBackendInner<B> {
         let task_count = task_snapshots.len();
 
         if task_snapshots.is_empty() {
+            // TODO: is this even possible?
             return Some((snapshot_time, false));
         }
 
