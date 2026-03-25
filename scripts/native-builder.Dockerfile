@@ -89,9 +89,10 @@ RUN rustup target add \
 # cargo-rustflags resolves the effective RUSTFLAGS for a target by querying
 # cargo's own config resolution (handles cfg() predicates, --config overlays).
 RUN npm i -g @napi-rs/cli@2.18.4 && \
-    cargo install cargo-rustflags
+    cargo install cargo-rustflags && \
+    cargo install sccache --locked
 
 # Verify installations
-RUN node --version && rustc --version && napi -h > /dev/null && cargo rustflags --help > /dev/null
+RUN node --version && rustc --version && napi -h > /dev/null && cargo rustflags --help > /dev/null && sccache --version
 
 WORKDIR /build
