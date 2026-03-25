@@ -93,6 +93,7 @@ on:
 env:
   NAPI_CLI_VERSION: 2.18.4
   TURBO_VERSION: 2.8.11
+  TURBO_ARGS: '-v --env-mode loose --remote-cache-timeout 300 --log-order stream'
   NODE_LTS_VERSION: 20.9.0
   # run-tests.js reads `TEST_CONCURRENCY` if no explicit `--concurrency` or `-c`
   # argument is provided
@@ -262,7 +263,7 @@ jobs:
         with:
           mode: start
 
-      - run: pnpm dlx turbo@${TURBO_VERSION} run build-native-${{ inputs.rustBuildProfile }} -v --env-mode loose --remote-cache-timeout 300 --summarize --log-order stream -- --target ${{ inputs.buildNativeTarget }}
+      - run: pnpm dlx turbo@${TURBO_VERSION} run build-native-${{ inputs.rustBuildProfile }} ${TURBO_ARGS} --summarize -- --target ${{ inputs.buildNativeTarget }}
         if: ${{ inputs.skipNativeBuild != 'yes' }}
 
       - name: Upload next-swc artifact
