@@ -41,9 +41,12 @@ function extractKey(urlPath) {
 
 function turboFetch(method, key, body) {
   return new Promise((resolve, reject) => {
-    // Turbo cache API: /v8/artifacts/{key} with Bearer auth only.
-    // No teamId/slug params — matches ijjk/rust-cache behavior exactly.
-    const turboPath = `/v8/artifacts/${encodeURIComponent(key)}`
+    // Turbo cache API: /v8/artifacts/{key} with Bearer auth.
+    // Use slug param (self-hosted servers use slug for team routing).
+    const teamParams = TURBO_TEAM
+      ? `?slug=${encodeURIComponent(TURBO_TEAM)}`
+      : ''
+    const turboPath = `/v8/artifacts/${encodeURIComponent(key)}${teamParams}`
     const parsed = new URL(turboPath, TURBO_API)
     const opts = {
       hostname: parsed.hostname,
