@@ -4,23 +4,19 @@
 // sccache uses WebDAV as a storage backend (PUT/GET/PROPFIND).
 // This proxy translates those to turbo's REST API (PUT/GET/HEAD on /v8/artifacts/{key}).
 //
-// Usage:
-//   node scripts/memcache-turbo-proxy.js
-//
-// Env vars:
-//   TURBO_API    - turbo API base URL (default: https://vercel.com)
-//   TURBO_TOKEN  - bearer token for authentication (required)
-//   TURBO_TEAM   - team ID for cache namespace (default: vercel)
-//   SCCACHE_TURBO_PROXY_PORT - listen port (default: 18080)
+// All operations are logged to /tmp/sccache-turbo-proxy.log for debugging.
+// The last 50 operations are printed on shutdown.
 
 const http = require('http')
 const https = require('https')
+const fs = require('fs')
 const { URL } = require('url')
 
 const TURBO_API = process.env.TURBO_API || 'https://vercel.com'
 const TURBO_TOKEN = process.env.TURBO_TOKEN
 const TURBO_TEAM = process.env.TURBO_TEAM || 'vercel'
 const PORT = parseInt(process.env.SCCACHE_TURBO_PROXY_PORT || '18080', 10)
+const LOG_FILE = '/tmp/sccache-turbo-proxy.log'
 
 if (!TURBO_TOKEN) {
   console.error('TURBO_TOKEN is required')
@@ -30,11 +26,14 @@ if (!TURBO_TOKEN) {
 const apiUrl = new URL(TURBO_API)
 const remoteModule = apiUrl.protocol === 'https:' ? https : http
 
-let stats = { gets: 0, puts: 0, hits: 0, misses: 0, errors: 0 }
+let stats = { gets: 0, puts: 0, hits: 0, misses: 0, errors: 0, putBytes: 0 }
+const logStream = fs.createWriteStream(LOG_FILE, { flags: 'w' })
 
-// Extract the cache key from the request path.
-// sccache WebDAV paths look like: /key_prefix/ab/cdef1234... (split across directories)
-// We flatten everything after the leading slash into a single key.
+function log(msg) {
+  const line = `${new Date().toISOString()} ${msg}`
+  logStream.write(line + '\n')
+}
+
 function extractKey(urlPath) {
   return urlPath.replace(/^\/+/, '').replace(/\//g, '-')
 }
@@ -74,37 +73,38 @@ const server = http.createServer(async (req, res) => {
 
   try {
     if (method === 'GET') {
-      // Retrieve cached artifact
       stats.gets++
       const r = await turboFetch('GET', key)
       if (r.status === 200) {
         stats.hits++
+        log(`GET ${key} -> HIT (${r.body.length} bytes)`)
         res.writeHead(200, { 'Content-Length': r.body.length })
         res.end(r.body)
       } else {
         stats.misses++
+        log(`GET ${key} -> MISS (turbo ${r.status})`)
         res.writeHead(404)
         res.end()
       }
     } else if (method === 'PUT') {
-      // Store artifact
       stats.puts++
       const chunks = []
       req.on('data', (c) => chunks.push(c))
       req.on('end', async () => {
         const body = Buffer.concat(chunks)
+        stats.putBytes += body.length
         const r = await turboFetch('PUT', key, body)
+        log(`PUT ${key} -> turbo ${r.status} (${body.length} bytes)`)
         res.writeHead(r.status < 300 ? 201 : r.status)
         res.end()
       })
-      return // don't end yet, waiting for body
+      return
     } else if (method === 'PROPFIND' || method === 'HEAD') {
-      // Check existence — sccache uses PROPFIND, we translate to HEAD
       stats.gets++
       const r = await turboFetch('HEAD', key)
       if (r.status === 200) {
         stats.hits++
-        // Return a minimal WebDAV multistatus response
+        log(`PROPFIND ${key} -> HIT`)
         const xml = `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:href>${req.url}</d:href><d:propstat><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`
         res.writeHead(207, {
           'Content-Type': 'application/xml',
@@ -113,19 +113,22 @@ const server = http.createServer(async (req, res) => {
         res.end(xml)
       } else {
         stats.misses++
+        log(`PROPFIND ${key} -> MISS (turbo ${r.status})`)
         res.writeHead(404)
         res.end()
       }
     } else if (method === 'MKCOL') {
-      // sccache may try to create directories — just say OK
+      log(`MKCOL ${key} -> 201`)
       res.writeHead(201)
       res.end()
     } else {
+      log(`${method} ${key} -> 405`)
       res.writeHead(405)
       res.end()
     }
   } catch (e) {
     stats.errors++
+    log(`ERROR ${method} ${key}: ${e.message}`)
     console.error(`Error handling ${method} ${req.url}: ${e.message}`)
     res.writeHead(502)
     res.end()
@@ -138,13 +141,21 @@ server.listen(PORT, '127.0.0.1', () => {
   )
   console.log(`  TURBO_API: ${TURBO_API}`)
   console.log(`  TURBO_TEAM: ${TURBO_TEAM}`)
+  console.log(`  Log: ${LOG_FILE}`)
 })
 
-process.on('SIGINT', () => {
-  console.log('\nsccache-turbo-proxy stats:', JSON.stringify(stats))
+function shutdown() {
+  logStream.end()
+  console.log('\n=== sccache-turbo-proxy stats ===')
+  console.log(JSON.stringify(stats, null, 2))
+  console.log(`\n=== Last 50 log entries (${LOG_FILE}) ===`)
+  try {
+    const lines = fs.readFileSync(LOG_FILE, 'utf-8').trim().split('\n')
+    const tail = lines.slice(-50)
+    for (const line of tail) console.log(line)
+  } catch {}
   process.exit(0)
-})
-process.on('SIGTERM', () => {
-  console.log('\nsccache-turbo-proxy stats:', JSON.stringify(stats))
-  process.exit(0)
-})
+}
+
+process.on('SIGINT', shutdown)
+process.on('SIGTERM', shutdown)

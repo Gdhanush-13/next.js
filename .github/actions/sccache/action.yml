@@ -46,7 +46,14 @@ runs:
         sccache --show-stats || true
         sccache --stop-server 2>/dev/null || true
 
+        # Stop the proxy (sends SIGTERM which triggers log dump)
         if [ -f /tmp/sccache-turbo-proxy.pid ]; then
           kill $(cat /tmp/sccache-turbo-proxy.pid) 2>/dev/null || true
+          sleep 1
           rm -f /tmp/sccache-turbo-proxy.pid
+        fi
+        # Show proxy log
+        if [ -f /tmp/sccache-turbo-proxy.log ]; then
+          echo "=== sccache-turbo-proxy log (last 50) ==="
+          tail -50 /tmp/sccache-turbo-proxy.log
         fi
