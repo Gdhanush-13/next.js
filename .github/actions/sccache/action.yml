@@ -21,8 +21,8 @@ runs:
       if: ${{ inputs.mode == 'start' }}
       shell: bash
       run: |
-        # Verify turbo API connectivity (non-fatal — sccache works without remote cache)
-        node scripts/memcache-turbo-proxy.js --test || echo "WARNING: Turbo cache API not reachable, sccache will use local disk only"
+        # Verify turbo API connectivity (hard fail if API is unreachable)
+        node scripts/memcache-turbo-proxy.js --test
 
         # Start proxy in background
         node scripts/memcache-turbo-proxy.js &

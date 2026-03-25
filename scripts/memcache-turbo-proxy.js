@@ -41,12 +41,9 @@ function extractKey(urlPath) {
 
 function turboFetch(method, key, body) {
   return new Promise((resolve, reject) => {
-    // Turbo cache API: /v8/artifacts/{key} with Bearer auth
-    // Include both teamId and slug for compatibility with vercel.com and self-hosted servers.
-    const params = TURBO_TEAM
-      ? `?teamId=${encodeURIComponent(TURBO_TEAM)}&slug=${encodeURIComponent(TURBO_TEAM)}`
-      : ''
-    const turboPath = `/v8/artifacts/${encodeURIComponent(key)}${params}`
+    // Turbo cache API: /v8/artifacts/{key} with Bearer auth only.
+    // No teamId/slug params — matches ijjk/rust-cache behavior exactly.
+    const turboPath = `/v8/artifacts/${encodeURIComponent(key)}`
     const parsed = new URL(turboPath, TURBO_API)
     const opts = {
       hostname: parsed.hostname,
@@ -91,7 +88,12 @@ async function healthCheck() {
       console.error(
         `Turbo API health check failed: GET ${testKey} -> ${r.status} (expected 404)`
       )
-      console.error(`  TURBO_API: ${TURBO_API}, TURBO_TEAM: ${TURBO_TEAM}`)
+      console.error(`  TURBO_API: ${TURBO_API}`)
+      console.error(`  TURBO_TEAM: ${TURBO_TEAM}`)
+      console.error(
+        `  TURBO_TOKEN: ${TURBO_TOKEN ? TURBO_TOKEN.slice(0, 8) + '...' : '(not set)'}`
+      )
+      console.error(`  Full URL: ${TURBO_API}/v8/artifacts/${testKey}`)
       console.error(`  Response: ${r.body.toString().slice(0, 200)}`)
       return false
     }
