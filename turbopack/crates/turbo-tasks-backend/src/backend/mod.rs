@@ -1004,12 +1004,6 @@ impl<B: BackingStorage> TurboTasksBackendInner<B> {
         let wall_start = SystemTime::now();
         debug_assert!(self.should_persist());
 
-        // Short-circuit if no tasks have been modified since the last snapshot.
-        // This avoids the expensive O(N) scan of the entire storage map.
-        if self.storage.modified_count() == 0 {
-            return Some((start, false));
-        }
-
         let suspended_operations;
         {
             let _span = tracing::info_span!("blocking").entered();
@@ -1031,7 +1025,9 @@ impl<B: BackingStorage> TurboTasksBackendInner<B> {
                 .map(|op| op.arc().clone())
                 .collect::<Vec<_>>();
         }
-        self.storage.start_snapshot();
+        // Enter snapshot mode, which atomically reads and resets the modified count.
+        // Checking after start_snapshot ensures no concurrent increments can race.
+        let (snapshot_guard, modified_count) = self.storage.start_snapshot();
         let mut snapshot_request = self.snapshot_request.lock();
         snapshot_request.snapshot_requested = false;
         self.in_progress_operations
@@ -1039,6 +1035,13 @@ impl<B: BackingStorage> TurboTasksBackendInner<B> {
         self.snapshot_completed.notify_all();
         let snapshot_time = Instant::now();
         drop(snapshot_request);
+
+        if modified_count == 0 {
+            // No tasks modified since the last snapshot — drop the guard (which
+            // calls end_snapshot) and skip the expensive O(N) scan.
+            drop(snapshot_guard);
+            return Some((start, false));
+        }
 
         #[cfg(feature = "print_cache_item_size")]
         #[derive(Default)]
@@ -1186,7 +1189,7 @@ impl<B: BackingStorage> TurboTasksBackendInner<B> {
         };
 
         // take_snapshot already filters empty items and empty shards in parallel
-        let task_snapshots = self.storage.take_snapshot(&process);
+        let task_snapshots = self.storage.take_snapshot(snapshot_guard, &process);
 
         drop(snapshot_span);
         let snapshot_duration = start.elapsed();

@@ -105,20 +105,16 @@ impl Storage {
         }
     }
 
-    /// Returns the approximate number of tasks with modified flags set.
-    /// Can be used to short-circuit snapshot logic when there's nothing to persist.
-    pub fn modified_count(&self) -> u64 {
-        self.modified_count.load(Ordering::Relaxed)
-    }
-
     /// Processes every modified item (resp. a snapshot of it) with the given function and returns
-    /// the results. Ends snapshot mode afterwards.
-    /// process is called while holding a read lock on the task storage, so it can access
+    /// the results. Ends snapshot mode when the returned `SnapshotGuard` (held by each shard) is
+    /// dropped.
+    ///
+    /// `process` is called while holding a read lock on the task storage, so it can access
     /// the TaskStorage directly without cloning.
-    /// process_snapshot is called for tasks that were accessed during snapshot mode and
-    /// receives an owned Box<TaskStorage> snapshot.
+    ///
     /// Both callbacks receive a mutable scratch buffer that can be reused across iterations
     /// to avoid repeated allocations.
+    ///
     /// The returned shards implement `IntoIterator`. Empty shards (no modified or snapshot
     /// entries) are filtered out, but shards may still yield no items if all entries produce
     /// empty `SnapshotItem`s (this is rare and only happens under error conditions).
@@ -127,16 +123,10 @@ impl Storage {
         P: for<'a> Fn(TaskId, &'a TaskStorage, &mut TurboBincodeBuffer) -> SnapshotItem + Sync,
     >(
         &'l self,
+        guard: SnapshotGuard<'l>,
         process: &'l P,
     ) -> Vec<SnapshotShard<'l, P>> {
-        if !self.snapshot_mode() {
-            self.start_snapshot();
-        }
-
-        let guard = Arc::new(SnapshotGuard {
-            storage: self,
-            scratch_buffers: ThreadLocal::new(),
-        });
+        let guard = Arc::new(guard);
 
         // The number of shards is much larger than the number of threads, so the effect of the
         // locks held is negligible.
@@ -188,15 +178,24 @@ impl Storage {
         .collect()
     }
 
-    /// Start snapshot mode.
+    /// Enter snapshot mode and return a guard that will call `end_snapshot` on drop.
     ///
     /// Resets `modified_count` to zero. The count is only used to short-circuit
     /// *before* entering snapshot mode, so it doesn't need to be accurate during
     /// a snapshot. `end_snapshot` will re-increment it for any tasks that still
     /// have modifications after the snapshot completes.
-    pub fn start_snapshot(&self) {
-        self.modified_count.store(0, Ordering::Relaxed);
+    ///
+    /// Safety invariant: `start_snapshot` and `end_snapshot` are always called
+    /// sequentially within a single `snapshot_and_persist` invocation (the sole
+    /// caller). There is no concurrent snapshot lifecycle, so they cannot race.
+    pub fn start_snapshot(&self) -> (SnapshotGuard<'_>, u64) {
+        // Enter snapshot mode first so concurrent track_modification calls switch
+        // to the _during_snapshot path and stop incrementing modified_count.
         self.snapshot_mode.store(true, Ordering::Release);
+        // Atomically read and reset the count. No more increments can arrive
+        // since we're in snapshot mode.
+        let modified_count = self.modified_count.swap(0, Ordering::Relaxed);
+        (SnapshotGuard::new(self), modified_count)
     }
 
     /// End snapshot mode.
@@ -426,7 +425,14 @@ pub struct SnapshotGuard<'l> {
     scratch_buffers: ThreadLocal<Cell<ScratchBufferSlot>>,
 }
 
-impl SnapshotGuard<'_> {
+impl<'l> SnapshotGuard<'l> {
+    fn new(storage: &'l Storage) -> Self {
+        Self {
+            storage,
+            scratch_buffers: ThreadLocal::new(),
+        }
+    }
+
     fn take_scratch_buffer(&self) -> TurboBincodeBuffer {
         let cell = self.scratch_buffers.get_or_default();
         match cell.take() {
