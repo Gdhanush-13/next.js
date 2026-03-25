@@ -30,8 +30,7 @@ let stats = { gets: 0, puts: 0, hits: 0, misses: 0, errors: 0, putBytes: 0 }
 const logStream = fs.createWriteStream(LOG_FILE, { flags: 'w' })
 
 function log(msg) {
-  const line = `${new Date().toISOString()} ${msg}`
-  logStream.write(line + '\n')
+  logStream.write(`${new Date().toISOString()} ${msg}\n`)
 }
 
 function extractKey(urlPath) {
@@ -40,7 +39,8 @@ function extractKey(urlPath) {
 
 function turboFetch(method, key, body) {
   return new Promise((resolve, reject) => {
-    const turboPath = `/v8/artifacts/${encodeURIComponent(key)}?teamId=${encodeURIComponent(TURBO_TEAM)}`
+    // Turbo cache API: /v8/artifacts/{key} with Bearer auth, no teamId param
+    const turboPath = `/v8/artifacts/${encodeURIComponent(key)}`
     const parsed = new URL(turboPath, TURBO_API)
     const opts = {
       hostname: parsed.hostname,
@@ -65,6 +65,34 @@ function turboFetch(method, key, body) {
     if (body) req.write(body)
     req.end()
   })
+}
+
+// Verify turbo API connectivity before starting the server.
+// A GET on a non-existent key should return 404 (not 403).
+async function healthCheck() {
+  const testKey = `sccache-health-check-${Date.now()}`
+  try {
+    const r = await turboFetch('GET', testKey)
+    if (r.status === 404) {
+      log(`Health check OK: GET ${testKey} -> 404 (expected)`)
+      return true
+    } else if (r.status === 200) {
+      log(
+        `Health check OK: GET ${testKey} -> 200 (unexpected hit but API works)`
+      )
+      return true
+    } else {
+      console.error(
+        `Turbo API health check failed: GET ${testKey} -> ${r.status} (expected 404)`
+      )
+      console.error(`  TURBO_API: ${TURBO_API}, TURBO_TEAM: ${TURBO_TEAM}`)
+      console.error(`  Response: ${r.body.toString().slice(0, 200)}`)
+      return false
+    }
+  } catch (e) {
+    console.error(`Turbo API health check error: ${e.message}`)
+    return false
+  }
 }
 
 const server = http.createServer(async (req, res) => {
@@ -135,14 +163,21 @@ const server = http.createServer(async (req, res) => {
   }
 })
 
-server.listen(PORT, '127.0.0.1', () => {
-  console.log(
-    `sccache-turbo-proxy (WebDAV) listening on http://127.0.0.1:${PORT}`
-  )
-  console.log(`  TURBO_API: ${TURBO_API}`)
-  console.log(`  TURBO_TEAM: ${TURBO_TEAM}`)
-  console.log(`  Log: ${LOG_FILE}`)
-})
+async function main() {
+  const ok = await healthCheck()
+  if (!ok) {
+    process.exit(1)
+  }
+
+  server.listen(PORT, '127.0.0.1', () => {
+    console.log(
+      `sccache-turbo-proxy (WebDAV) listening on http://127.0.0.1:${PORT}`
+    )
+    console.log(`  TURBO_API: ${TURBO_API}`)
+    console.log(`  TURBO_TEAM: ${TURBO_TEAM}`)
+    console.log(`  Log: ${LOG_FILE}`)
+  })
+}
 
 function shutdown() {
   logStream.end()
@@ -159,3 +194,5 @@ function shutdown() {
 
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)
+
+main()
