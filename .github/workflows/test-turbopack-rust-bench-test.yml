@@ -46,6 +46,10 @@ jobs:
       - run: pnpm install
         working-directory: turbopack/benchmark-apps
 
+      - uses: ./.github/actions/sccache
+        with:
+          mode: start
+
       - name: Build benchmarks for tests
         timeout-minutes: 120
         run: |

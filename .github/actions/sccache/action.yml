@@ -11,6 +11,12 @@ inputs:
 runs:
   using: 'composite'
   steps:
+    - name: Install sccache
+      if: ${{ inputs.mode == 'start' }}
+      uses: taiki-e/install-action@v2
+      with:
+        tool: sccache@0.14.0
+
     - name: Start sccache proxy + server
       if: ${{ inputs.mode == 'start' }}
       shell: bash

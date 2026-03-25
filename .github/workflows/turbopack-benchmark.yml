@@ -40,12 +40,9 @@ jobs:
         with:
           tool: cargo-codspeed@3.0.5
 
-      - name: Cache on ${{ github.ref_name }}
-        uses: ijjk/rust-cache@turbo-cache-v1.0.9
+      - uses: ./.github/actions/sccache
         with:
-          save-if: 'true'
-          cache-provider: 'turbo'
-          shared-key: build-turbopack-benchmark-small-apps-${{ hashFiles('.cargo/config.toml') }}
+          mode: start
 
       - name: Install pnpm dependencies
         working-directory: turbopack/benchmark-apps
@@ -80,12 +77,9 @@ jobs:
         with:
           tool: cargo-codspeed@3.0.5
 
-      - name: Cache on ${{ github.ref_name }}
-        uses: ijjk/rust-cache@turbo-cache-v1.0.9
+      - uses: ./.github/actions/sccache
         with:
-          save-if: 'true'
-          cache-provider: 'turbo'
-          shared-key: build-turbopack-benchmark-analyzer-${{ hashFiles('.cargo/config.toml') }}
+          mode: start
 
       - name: Install pnpm dependencies
         working-directory: turbopack/benchmark-apps
