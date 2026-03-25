@@ -42,11 +42,14 @@ function extractKey(urlPath) {
 function turboFetch(method, key, body) {
   return new Promise((resolve, reject) => {
     // Turbo cache API: /v8/artifacts/{key} with Bearer auth.
-    // Use slug param (self-hosted servers use slug for team routing).
-    const teamParams = TURBO_TEAM
-      ? `?slug=${encodeURIComponent(TURBO_TEAM)}`
-      : ''
-    const turboPath = `/v8/artifacts/${encodeURIComponent(key)}${teamParams}`
+    // Include teamId and slug for self-hosted turbo cache server compatibility.
+    const qs = new URLSearchParams()
+    if (TURBO_TEAM) {
+      qs.set('teamId', TURBO_TEAM)
+      qs.set('slug', TURBO_TEAM)
+    }
+    const qstr = qs.toString() ? `?${qs.toString()}` : ''
+    const turboPath = `/v8/artifacts/${encodeURIComponent(key)}${qstr}`
     const parsed = new URL(turboPath, TURBO_API)
     const opts = {
       hostname: parsed.hostname,
