@@ -262,6 +262,7 @@ jobs:
         if: ${{ matrix.docker }}
         run: |
           docker run --rm \
+            --network host \
             -e CI -e RUST_BACKTRACE -e CARGO_TERM_COLOR \
             -e CARGO_INCREMENTAL=0 -e CARGO_REGISTRIES_CRATES_IO_PROTOCOL \
             -e TURBO_API -e TURBO_TEAM -e TURBO_TOKEN -e TURBO_VERSION -e TURBO_CACHE="remote:rw" \
@@ -270,7 +271,7 @@ jobs:
             -e ARCH="${{ matrix.arch }}" \
             -e BUILD_TASK="${{ matrix.build_task }}" \
             -e RUSTC_WRAPPER=sccache \
-            -e SCCACHE_WEBDAV_ENDPOINT=http://host.docker.internal:${SCCACHE_TURBO_PROXY_PORT:-18080} \
+            -e SCCACHE_WEBDAV_ENDPOINT=http://127.0.0.1:${SCCACHE_TURBO_PROXY_PORT:-18080} \
             -e SCCACHE_WEBDAV_KEY_PREFIX=sccache-v1 \
             -e SCCACHE_BASE_DIR=/build \
             -e SCCACHE_DIRECT=false \

@@ -128,6 +128,12 @@ cd packages/next-swc
 npm run "$BUILD_TASK" -- --target "$TARGET"
 llvm-strip -x native/next-swc.*.node
 
+# Show sccache stats if available
+if command -v sccache &>/dev/null; then
+  echo "--- sccache stats ---"
+  sccache --show-stats || true
+fi
+
 # Post-build verification
 echo "--- Dynamic libraries ---"
 readelf -d native/next-swc.*.node | grep NEEDED
