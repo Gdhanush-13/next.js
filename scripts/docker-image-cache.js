@@ -67,10 +67,9 @@ function buildImage() {
 }
 
 if (load) {
-  // Post-turbo step: load the cached tar if present, or build if missing
-  if (imageExists() && !force) {
-    console.log('Docker image already loaded')
-  } else if (fs.existsSync(IMAGE_TAR)) {
+  // Post-turbo step: load the cached tar if present, or build if missing.
+  // Always load the tar if it exists (turbo may have restored a newer image).
+  if (fs.existsSync(IMAGE_TAR)) {
     console.log('Loading Docker image from turbo cache...')
     execSync(`docker load -i ${IMAGE_TAR}`, { stdio: 'inherit' })
     fs.unlinkSync(IMAGE_TAR)
