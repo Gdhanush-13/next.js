@@ -50,9 +50,25 @@ function computeCacheKey() {
   return hash.digest('hex')
 }
 
+const IS_VERCEL =
+  TURBO_API === 'https://vercel.com' || TURBO_API === 'https://vercel.com/'
+
 function turboUrl(key) {
+  if (IS_VERCEL) {
+    // @vercel/remote uses /api/v8/artifacts (note the /api/ prefix)
+    const qs = TURBO_TEAM ? `?teamId=${TURBO_TEAM}` : ''
+    return `https://vercel.com/api/v8/artifacts/${key}${qs}`
+  }
   const slug = TURBO_TEAM ? `?slug=${TURBO_TEAM}` : ''
-  return `${TURBO_API}/v8/artifacts/${encodeURIComponent(key)}${slug}`
+  return `${TURBO_API}/v8/artifacts/${key}${slug}`
+}
+
+function turboHeaders() {
+  return {
+    Authorization: `Bearer ${TURBO_TOKEN}`,
+    'User-Agent': 'turbo 2 docker-image-cache',
+    'x-artifact-client-ci': 'GITHUB_ACTIONS',
+  }
 }
 
 function imageExists() {
@@ -105,7 +121,7 @@ async function main() {
     console.log(`Checking turbo cache: HEAD ${turboUrl(key)}`)
     const headRes = await fetch(turboUrl(key), {
       method: 'HEAD',
-      headers: { Authorization: `Bearer ${TURBO_TOKEN}` },
+      headers: turboHeaders(),
     })
 
     if (headRes.ok) {
@@ -113,8 +129,12 @@ async function main() {
       const zstdFile = tmpFile('docker-image-cache.tar.zst')
 
       // Download with curl (handles large files, no Node buffer limits)
+      const hdrs = turboHeaders()
+      const curlHdrs = Object.entries(hdrs)
+        .map(([k, v]) => `-H "${k}: ${v}"`)
+        .join(' ')
       execSync(
-        `curl -fsSL -o ${zstdFile} -H "Authorization: Bearer ${TURBO_TOKEN}" "${turboUrl(key)}"`,
+        `curl -fsSL -o ${zstdFile} ${curlHdrs} "${turboUrl(key)}"`,
         { stdio: 'inherit' }
       )
 
@@ -148,16 +168,17 @@ async function main() {
   )
 
   // Upload with curl (handles large files, streams from disk).
-  // Include turbo-specific headers that Vercel CDN may require for routing.
   try {
+    const hdrs = {
+      ...turboHeaders(),
+      'Content-Type': 'application/octet-stream',
+      'x-artifact-duration': '0',
+    }
+    const curlHdrs = Object.entries(hdrs)
+      .map(([k, v]) => `-H "${k}: ${v}"`)
+      .join(' ')
     execSync(
-      `curl -fsS -X PUT` +
-        ` -H "Authorization: Bearer ${TURBO_TOKEN}"` +
-        ` -H "Content-Type: application/octet-stream"` +
-        ` -H "User-Agent: turbo 2 docker-image-cache"` +
-        ` -H "x-artifact-duration: 0"` +
-        ` -H "x-artifact-client-ci: GITHUB_ACTIONS"` +
-        ` --data-binary @${zstdFile} "${turboUrl(key)}"`,
+      `curl -fsS -X PUT ${curlHdrs} --data-binary @${zstdFile} "${turboUrl(key)}"`,
       { stdio: 'inherit' }
     )
     console.log('Docker image uploaded to turbo cache')
