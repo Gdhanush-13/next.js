@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-// @ts-check
 //
 // Build or restore the next-swc-builder Docker image using turbo remote cache.
 //
@@ -11,10 +10,8 @@
 //   node scripts/docker-image-cache.js           # restore from cache or build + upload
 //   node scripts/docker-image-cache.js --force   # always rebuild and re-upload
 
-const { execSync, spawn } = require('child_process')
+const { execSync } = require('child_process')
 const { createHash } = require('crypto')
-const { pipeline } = require('stream/promises')
-const { Readable } = require('stream')
 const path = require('path')
 const fs = require('fs')
 const os = require('os')
@@ -85,6 +82,11 @@ function tmpFile(name) {
   return path.join(process.env.RUNNER_TEMP || os.tmpdir(), name)
 }
 
+/** Run a shell pipeline via bash -c (avoids execSync shell:true TS issue) */
+function sh(cmd) {
+  execSync(cmd, { stdio: 'inherit', shell: '/bin/bash' })
+}
+
 async function main() {
   const key = computeCacheKey()
   console.log(`Docker image cache key: ${key}`)
@@ -105,32 +107,23 @@ async function main() {
 
     if (headRes.ok) {
       console.log('Cache HIT — downloading docker image...')
-      const getRes = await fetch(turboUrl(key), {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${TURBO_TOKEN}` },
-      })
+      const zstdFile = tmpFile('docker-image-cache.tar.zst')
 
-      if (getRes.ok && getRes.body) {
-        // Download compressed image, decompress with zstd, load into docker
-        const zstdFile = tmpFile('docker-image-cache.tar.zst')
-        const writeStream = fs.createWriteStream(zstdFile)
-        await pipeline(Readable.fromWeb(getRes.body), writeStream)
+      // Download with curl (handles large files, no Node buffer limits)
+      execSync(
+        `curl -fsSL -o ${zstdFile} -H "Authorization: Bearer ${TURBO_TOKEN}" "${turboUrl(key)}"`,
+        { stdio: 'inherit' }
+      )
 
-        const size = fs.statSync(zstdFile).size
-        console.log(
-          `Downloaded ${(size / 1024 / 1024).toFixed(0)} MB compressed`
-        )
+      const size = fs.statSync(zstdFile).size
+      console.log(
+        `Downloaded ${(size / 1024 / 1024).toFixed(0)} MB compressed`
+      )
 
-        // zstd -d | docker load
-        execSync(`zstd -d -c ${zstdFile} | docker load`, {
-          stdio: 'inherit',
-          shell: true,
-        })
-        fs.unlinkSync(zstdFile)
-        console.log('Docker image restored from turbo cache')
-        return
-      }
-      console.log(`Cache download failed: ${getRes.status}`)
+      sh(`zstd -d -c ${zstdFile} | docker load`)
+      fs.unlinkSync(zstdFile)
+      console.log('Docker image restored from turbo cache')
+      return
     } else {
       console.log(`Cache MISS (${headRes.status})`)
     }
@@ -141,41 +134,28 @@ async function main() {
     buildImage()
   }
 
-  // Compress and upload: docker save | zstd > file, then upload
+  // Compress and upload: docker save | zstd > file, then upload with curl
   console.log('Compressing docker image with zstd...')
   const zstdFile = tmpFile('docker-image-cache.tar.zst')
-  execSync(`docker save ${IMAGE_NAME} | zstd -3 -T0 -o ${zstdFile}`, {
-    stdio: 'inherit',
-    shell: true,
-  })
+  sh(`docker save ${IMAGE_NAME} | zstd -3 -T0 -o ${zstdFile}`)
 
   const size = fs.statSync(zstdFile).size
   console.log(
     `Compressed: ${(size / 1024 / 1024).toFixed(0)} MB — uploading...`
   )
 
-  // Stream upload to avoid 2GB Buffer limit
-  const bodyStream = Readable.toWeb(fs.createReadStream(zstdFile))
-  const putRes = await fetch(turboUrl(key), {
-    method: 'PUT',
-    headers: {
-      Authorization: `Bearer ${TURBO_TOKEN}`,
-      'Content-Type': 'application/octet-stream',
-      'Content-Length': String(size),
-    },
-    body: bodyStream,
-    duplex: 'half',
-  })
+  // Upload with curl (handles large files, streams from disk)
+  try {
+    execSync(
+      `curl -fsS -X PUT -H "Authorization: Bearer ${TURBO_TOKEN}" -H "Content-Type: application/octet-stream" --data-binary @${zstdFile} "${turboUrl(key)}"`,
+      { stdio: 'inherit' }
+    )
+    console.log('Docker image uploaded to turbo cache')
+  } catch {
+    console.log('WARNING: Failed to upload docker image to turbo cache')
+  }
 
   fs.unlinkSync(zstdFile)
-
-  if (putRes.ok) {
-    console.log('Docker image uploaded to turbo cache')
-  } else {
-    console.log(
-      `WARNING: Failed to upload docker image: ${putRes.status} ${await putRes.text()}`
-    )
-  }
 }
 
 main().catch((e) => {
