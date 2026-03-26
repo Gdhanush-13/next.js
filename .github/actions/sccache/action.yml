@@ -32,9 +32,6 @@ runs:
           export TURBO_API="${{ inputs.turbo-api }}"
         fi
 
-        # Install @vercel/remote for the proxy (used when TURBO_API is vercel.com)
-        npm install --no-save @vercel/remote 2>/dev/null || true
-
         # Verify turbo API connectivity (must succeed or the build fails)
         node scripts/memcache-turbo-proxy.js --test
 

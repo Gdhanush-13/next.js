@@ -252,7 +252,6 @@ jobs:
       - name: Start sccache proxy for docker
         if: ${{ matrix.docker }}
         run: |
-          npm install --no-save @vercel/remote 2>/dev/null || true
           node scripts/memcache-turbo-proxy.js &
           echo $! > /tmp/sccache-turbo-proxy.pid
           sleep 1

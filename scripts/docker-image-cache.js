@@ -3,7 +3,7 @@
 // Build or restore the next-swc-builder Docker image using turbo remote cache.
 //
 // Computes a cache key from the Dockerfile + rust-toolchain.toml contents,
-// then checks the turbo cache API directly (no turbo task dependency).
+// then checks the turbo cache API via scripts/turbo-cache.js.
 // Images are compressed with zstd before upload (~2.8GB → ~500MB).
 //
 // Usage:
@@ -15,6 +15,7 @@ const { createHash } = require('crypto')
 const path = require('path')
 const fs = require('fs')
 const os = require('os')
+const cache = require('./turbo-cache')
 
 const { parseArgs } = require('node:util')
 const { values: flags } = parseArgs({
@@ -33,14 +34,8 @@ const CACHE_INPUTS = [
   path.join(REPO_ROOT, 'rust-toolchain.toml'),
 ]
 
-// Turbo cache config — same env vars as turbo CLI
-const TURBO_API = process.env.TURBO_API || 'https://vercel.com'
-const TURBO_TOKEN = process.env.TURBO_TOKEN
-const TURBO_TEAM = process.env.TURBO_TEAM
-
 function computeCacheKey() {
   // Turbo cache keys must be hex-only (^[a-fA-F0-9]+$).
-  // We hash a version prefix + file contents to produce a valid key.
   const hash = createHash('sha256')
   hash.update('docker-image-v2\0')
   for (const file of CACHE_INPUTS) {
@@ -48,27 +43,6 @@ function computeCacheKey() {
     hash.update(fs.readFileSync(file))
   }
   return hash.digest('hex')
-}
-
-const IS_VERCEL =
-  TURBO_API === 'https://vercel.com' || TURBO_API === 'https://vercel.com/'
-
-function turboUrl(key) {
-  if (IS_VERCEL) {
-    // @vercel/remote uses /api/v8/artifacts (note the /api/ prefix)
-    const qs = TURBO_TEAM ? `?teamId=${TURBO_TEAM}` : ''
-    return `https://vercel.com/api/v8/artifacts/${key}${qs}`
-  }
-  const slug = TURBO_TEAM ? `?slug=${TURBO_TEAM}` : ''
-  return `${TURBO_API}/v8/artifacts/${key}${slug}`
-}
-
-function turboHeaders() {
-  return {
-    Authorization: `Bearer ${TURBO_TOKEN}`,
-    'User-Agent': 'turbo 2 docker-image-cache',
-    'x-artifact-client-ci': 'GITHUB_ACTIONS',
-  }
 }
 
 function imageExists() {
@@ -101,7 +75,6 @@ function tmpFile(name) {
   return path.join(process.env.RUNNER_TEMP || os.tmpdir(), name)
 }
 
-/** Run a shell pipeline via bash -c (avoids execSync shell:true TS issue) */
 function sh(cmd) {
   execSync(cmd, { stdio: 'inherit', shell: '/bin/bash' })
 }
@@ -110,7 +83,7 @@ async function main() {
   const key = computeCacheKey()
   console.log(`Docker image cache key: ${key}`)
 
-  if (!TURBO_TOKEN) {
+  if (!process.env.TURBO_TOKEN) {
     console.log('No TURBO_TOKEN — building without cache')
     if (!imageExists()) buildImage()
     return
@@ -118,37 +91,22 @@ async function main() {
 
   // Try to restore from cache (unless --force)
   if (!flags.force) {
-    console.log(`Checking turbo cache: HEAD ${turboUrl(key)}`)
-    const headRes = await fetch(turboUrl(key), {
-      method: 'HEAD',
-      headers: turboHeaders(),
-    })
+    const hit = await cache.exists(key)
+    console.log(hit ? 'Cache HIT' : 'Cache MISS')
 
-    if (headRes.ok) {
-      console.log('Cache HIT — downloading docker image...')
+    if (hit) {
       const zstdFile = tmpFile('docker-image-cache.tar.zst')
-
-      // Download with curl (handles large files, no Node buffer limits)
-      const hdrs = turboHeaders()
-      const curlHdrs = Object.entries(hdrs)
-        .map(([k, v]) => `-H "${k}: ${v}"`)
-        .join(' ')
-      execSync(
-        `curl -fsSL -o ${zstdFile} ${curlHdrs} "${turboUrl(key)}"`,
-        { stdio: 'inherit' }
-      )
-
-      const size = fs.statSync(zstdFile).size
-      console.log(
-        `Downloaded ${(size / 1024 / 1024).toFixed(0)} MB compressed`
-      )
-
-      sh(`zstd -d -c ${zstdFile} | docker load`)
-      fs.unlinkSync(zstdFile)
-      console.log('Docker image restored from turbo cache')
-      return
-    } else {
-      console.log(`Cache MISS (${headRes.status})`)
+      const ok = await cache.getToFile(key, zstdFile)
+      if (ok) {
+        const size = fs.statSync(zstdFile).size
+        console.log(
+          `Downloaded ${(size / 1024 / 1024).toFixed(0)} MB compressed`
+        )
+        sh(`zstd -d -c ${zstdFile} | docker load`)
+        fs.unlinkSync(zstdFile)
+        console.log('Docker image restored from turbo cache')
+        return
+      }
     }
   }
 
@@ -157,7 +115,7 @@ async function main() {
     buildImage()
   }
 
-  // Compress and upload: docker save | zstd > file, then upload with curl
+  // Compress and upload
   console.log('Compressing docker image with zstd...')
   const zstdFile = tmpFile('docker-image-cache.tar.zst')
   sh(`docker save ${IMAGE_NAME} | zstd -3 -T0 -o ${zstdFile}`)
@@ -167,23 +125,12 @@ async function main() {
     `Compressed: ${(size / 1024 / 1024).toFixed(0)} MB — uploading...`
   )
 
-  // Upload with curl (handles large files, streams from disk).
   try {
-    const hdrs = {
-      ...turboHeaders(),
-      'Content-Type': 'application/octet-stream',
-      'x-artifact-duration': '0',
-    }
-    const curlHdrs = Object.entries(hdrs)
-      .map(([k, v]) => `-H "${k}: ${v}"`)
-      .join(' ')
-    execSync(
-      `curl -fsS -X PUT ${curlHdrs} --data-binary @${zstdFile} "${turboUrl(key)}"`,
-      { stdio: 'inherit' }
-    )
+    // Stream upload from file (avoids 2GB Buffer limit)
+    await cache.put(key, zstdFile)
     console.log('Docker image uploaded to turbo cache')
-  } catch {
-    console.log('WARNING: Failed to upload docker image to turbo cache')
+  } catch (e) {
+    console.log(`WARNING: Failed to upload: ${e.message}`)
   }
 
   fs.unlinkSync(zstdFile)
