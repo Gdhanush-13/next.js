@@ -75,10 +75,15 @@ runs:
         fi
         # Show proxy log
         if [ -f ${RUNNER_TEMP}/sccache-turbo-proxy.log ]; then
-          echo "=== sccache-turbo-proxy ERRORS ==="
-          grep -i 'ERROR\|FAIL\|502\|403\|405\|500' ${RUNNER_TEMP}/sccache-turbo-proxy.log | tail -50 || echo "(none)"
-          echo "=== sccache-turbo-proxy log (last 50) ==="
-          tail -50 ${RUNNER_TEMP}/sccache-turbo-proxy.log
-          echo "=== sccache-turbo-proxy PUT results ==="
-          grep 'PUT ' ${RUNNER_TEMP}/sccache-turbo-proxy.log | tail -20 || echo "(none)"
+          LOGF=${RUNNER_TEMP}/sccache-turbo-proxy.log
+          echo "=== proxy log: line count ==="
+          wc -l "$LOGF"
+          echo "=== proxy log: method summary ==="
+          sed 's/^[^ ]* //' "$LOGF" | cut -d' ' -f1 | sort | uniq -c | sort -rn || true
+          echo "=== proxy log: PUT lines (last 20) ==="
+          grep ' PUT ' "$LOGF" | tail -20 || echo "(no PUTs found)"
+          echo "=== proxy log: ERROR lines ==="
+          grep -i 'ERROR' "$LOGF" | tail -20 || echo "(no errors)"
+          echo "=== proxy log: last 100 ==="
+          tail -100 "$LOGF"
         fi
