@@ -144,10 +144,17 @@ async function main() {
     `Compressed: ${(size / 1024 / 1024).toFixed(0)} MB — uploading...`
   )
 
-  // Upload with curl (handles large files, streams from disk)
+  // Upload with curl (handles large files, streams from disk).
+  // Include turbo-specific headers that Vercel CDN may require for routing.
   try {
     execSync(
-      `curl -fsS -X PUT -H "Authorization: Bearer ${TURBO_TOKEN}" -H "Content-Type: application/octet-stream" --data-binary @${zstdFile} "${turboUrl(key)}"`,
+      `curl -fsS -X PUT` +
+        ` -H "Authorization: Bearer ${TURBO_TOKEN}"` +
+        ` -H "Content-Type: application/octet-stream"` +
+        ` -H "User-Agent: turbo 2 docker-image-cache"` +
+        ` -H "x-artifact-duration: 0"` +
+        ` -H "x-artifact-client-ci: GITHUB_ACTIONS"` +
+        ` --data-binary @${zstdFile} "${turboUrl(key)}"`,
       { stdio: 'inherit' }
     )
     console.log('Docker image uploaded to turbo cache')

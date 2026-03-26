@@ -37,103 +37,133 @@ function extractKey(urlPath) {
   return urlPath.replace(/^\/+/, '').replace(/\//g, '-')
 }
 
-// Use global fetch() (Node 18+) to match the HTTP behavior of node-fetch/reqwest
-// that turbo CLI and ijjk/rust-cache use. This sends proper User-Agent, Accept,
-// and other standard HTTP headers that raw http.request omits.
-async function turboFetch(method, key, body) {
-  const slug = TURBO_TEAM ? `?slug=${TURBO_TEAM}` : ''
-  const url = `${TURBO_API}/v8/artifacts/${encodeURIComponent(key)}${slug}`
-  const headers = {
+// Turbo cache API path prefix. turbo CLI uses /v8/artifacts/, but the
+// OpenAPI spec shows /artifacts/. Health check probes both and picks
+// whichever accepts PUT.
+let apiPrefix = '/v8/artifacts'
+
+// Headers matching what turbo CLI sends (Vercel CDN may require these for routing).
+function turboHeaders(body) {
+  const h = {
     Authorization: `Bearer ${TURBO_TOKEN}`,
+    'User-Agent': 'turbo 2 sccache-turbo-proxy',
+    'x-artifact-client-ci': 'GITHUB_ACTIONS',
   }
   if (body) {
-    headers['Content-Type'] = 'application/octet-stream'
-    headers['Content-Length'] = String(body.length)
+    h['Content-Type'] = 'application/octet-stream'
+    h['Content-Length'] = String(body.length)
+    h['x-artifact-duration'] = '0'
   }
-  const res = await fetch(url, { method, headers, body: body || undefined })
+  return h
+}
+
+async function turboFetch(method, key, body) {
+  const slug = TURBO_TEAM ? `?slug=${TURBO_TEAM}` : ''
+  const url = `${TURBO_API}${apiPrefix}/${encodeURIComponent(key)}${slug}`
+  const res = await fetch(url, {
+    method,
+    headers: turboHeaders(body),
+    body: body || undefined,
+  })
   const buf = Buffer.from(await res.arrayBuffer())
   return { status: res.status, body: buf }
 }
 
 // Verify turbo API connectivity with read AND write access.
+// Tries the configured API_PREFIX, and if PUT fails with 405, tries
+// alternate prefixes (/v8/artifacts, /artifacts) since the API spec
+// is ambiguous about the prefix.
 async function healthCheck() {
   const testKey = `sccache-health-check-${Date.now()}`
   const slug = TURBO_TEAM ? `?slug=${TURBO_TEAM}` : ''
-  const url = `${TURBO_API}/v8/artifacts/${testKey}${slug}`
-  const authHeaders = { Authorization: `Bearer ${TURBO_TOKEN}` }
 
-  console.error(`Health check: ${url}`)
+  console.error(`Health check:`)
   console.error(`  TURBO_API: ${TURBO_API}`)
   console.error(`  TURBO_TEAM: ${TURBO_TEAM}`)
   console.error(
     `  TURBO_TOKEN: ${TURBO_TOKEN ? TURBO_TOKEN.slice(0, 8) + '...' : '(not set)'}`
   )
 
-  try {
-    // 1. READ test: HEAD on a non-existent key should return 404 (not 403)
-    const headRes = await fetch(url, { method: 'HEAD', headers: authHeaders })
-    console.error(`  READ test:  HEAD -> ${headRes.status} ${headRes.statusText}`)
-    for (const [k, v] of headRes.headers) {
-      console.error(`    ${k}: ${v}`)
-    }
+  // Try different API path prefixes — turbo CLI uses /v8/artifacts,
+  // OpenAPI spec shows /artifacts, some servers may differ.
+  const prefixes = ['/v8/artifacts', '/artifacts']
 
-    if (headRes.status === 403) {
-      const body = await headRes.text()
-      console.error(`  Body: ${body.slice(0, 200)}`)
-      console.error('  FAIL: 403 on read — token has no cache access')
-      return false
-    }
-    if (headRes.status !== 404 && headRes.status !== 200) {
-      const body = await headRes.text()
-      console.error(`  Body: ${body.slice(0, 200)}`)
-      console.error(`  FAIL: unexpected status ${headRes.status} (expected 404)`)
-      return false
-    }
+  for (const prefix of prefixes) {
+    const url = `${TURBO_API}${prefix}/${testKey}${slug}`
+    console.error(`\n  Trying prefix "${prefix}":`)
+    console.error(`  URL: ${url}`)
 
-    // 2. WRITE test: PUT a small test value
-    const testBody = Buffer.from('sccache-write-test')
-    const putRes = await fetch(url, {
-      method: 'PUT',
-      headers: {
-        ...authHeaders,
-        'Content-Type': 'application/octet-stream',
-        'Content-Length': String(testBody.length),
-      },
-      body: testBody,
-    })
-    console.error(`  WRITE test: PUT -> ${putRes.status} ${putRes.statusText}`)
-    for (const [k, v] of putRes.headers) {
-      console.error(`    ${k}: ${v}`)
-    }
+    try {
+      // 1. READ test
+      const headRes = await fetch(url, {
+        method: 'HEAD',
+        headers: turboHeaders(),
+      })
+      console.error(`  READ:  HEAD -> ${headRes.status} ${headRes.statusText}`)
 
-    if (!putRes.ok) {
-      const body = await putRes.text()
-      console.error(`  Body: ${body.slice(0, 200)}`)
-      console.error('  FAIL: cannot write to turbo cache — check token permissions')
-      return false
-    }
-
-    // 3. Verify: GET the value back
-    const getRes = await fetch(url, { method: 'GET', headers: authHeaders })
-    console.error(`  VERIFY:     GET -> ${getRes.status} ${getRes.statusText}`)
-
-    if (getRes.ok) {
-      const data = Buffer.from(await getRes.arrayBuffer())
-      if (data.equals(testBody)) {
-        console.error('  OK: read/write verified')
-      } else {
-        console.error(
-          `  WARN: data mismatch (wrote ${testBody.length}B, read ${data.length}B)`
-        )
+      if (headRes.status === 403) {
+        console.error('  SKIP: 403 on read — wrong token or server')
+        continue
       }
-    }
+      if (headRes.status !== 404 && headRes.status !== 200) {
+        console.error(`  SKIP: unexpected ${headRes.status}`)
+        continue
+      }
 
-    log(`Health check OK: read+write verified for ${testKey}`)
-    return true
-  } catch (e) {
-    console.error(`Turbo API health check error: ${e.message}`)
-    return false
+      // 2. WRITE test
+      const testBody = Buffer.from('sccache-write-test')
+      const putRes = await fetch(url, {
+        method: 'PUT',
+        headers: turboHeaders(testBody),
+        body: testBody,
+      })
+      console.error(`  WRITE: PUT -> ${putRes.status} ${putRes.statusText}`)
+
+      if (putRes.status === 405) {
+        console.error('  SKIP: 405 Method Not Allowed — trying next prefix')
+        continue
+      }
+      if (!putRes.ok) {
+        const body = await putRes.text()
+        console.error(`  Body: ${body.slice(0, 200)}`)
+        console.error('  SKIP: write failed')
+        continue
+      }
+
+      // 3. Verify round-trip
+      const getRes = await fetch(url, {
+        method: 'GET',
+        headers: turboHeaders(),
+      })
+      console.error(`  VERIFY: GET -> ${getRes.status} ${getRes.statusText}`)
+
+      if (getRes.ok) {
+        const data = Buffer.from(await getRes.arrayBuffer())
+        if (data.equals(testBody)) {
+          console.error(`  OK: read/write verified with prefix "${prefix}"`)
+        } else {
+          console.error(
+            `  WARN: data mismatch (wrote ${testBody.length}B, read ${data.length}B)`
+          )
+        }
+      }
+
+      // Success — update the global prefix if different
+      if (prefix !== apiPrefix) {
+        console.error(`  Switching apiPrefix from "${apiPrefix}" to "${prefix}"`)
+        apiPrefix = prefix
+      }
+
+      log(`Health check OK: read+write verified for ${testKey}`)
+      return prefix
+    } catch (e) {
+      console.error(`  ERROR: ${e.message}`)
+      continue
+    }
   }
+
+  console.error('\nFAIL: no working turbo cache prefix found')
+  return null
 }
 
 const server = http.createServer(async (req, res) => {
@@ -207,8 +237,14 @@ const server = http.createServer(async (req, res) => {
 async function main() {
   // --test mode: verify turbo API connectivity and exit
   if (process.argv.includes('--test')) {
-    const ok = await healthCheck()
-    process.exit(ok ? 0 : 1)
+    const prefix = await healthCheck()
+    process.exit(prefix ? 0 : 1)
+  }
+
+  // Normal mode: run health check to discover working prefix
+  const prefix = await healthCheck()
+  if (!prefix) {
+    console.error('WARNING: health check failed, starting proxy anyway')
   }
 
   // Normal mode: start listening immediately
