@@ -70,23 +70,16 @@ const server = http.createServer(async (req, res) => {
       })
       return
     } else if (method === 'PROPFIND' || method === 'HEAD') {
-      stats.gets++
-      const hit = await cache.exists(key)
-      if (hit) {
-        stats.hits++
-        log(`PROPFIND ${shortKey} -> HIT`)
-        const xml = `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:href>${req.url}</d:href><d:propstat><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`
-        res.writeHead(207, {
-          'Content-Type': 'application/xml',
-          'Content-Length': Buffer.byteLength(xml),
-        })
-        res.end(xml)
-      } else {
-        stats.misses++
-        log(`PROPFIND ${shortKey} -> MISS`)
-        res.writeHead(404)
-        res.end()
-      }
+      // Always return 207 (exists) for PROPFIND. sccache's WebDAV client
+      // PROPFINDs parent directories before checking the actual entry,
+      // generating 3-4 round-trips per lookup. By always saying "exists",
+      // sccache goes straight to GET (1 round-trip, returns 404 on miss).
+      const xml = `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:href>${req.url}</d:href><d:propstat><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`
+      res.writeHead(207, {
+        'Content-Type': 'application/xml',
+        'Content-Length': Buffer.byteLength(xml),
+      })
+      res.end(xml)
     } else if (method === 'MKCOL') {
       res.writeHead(201)
       res.end()
