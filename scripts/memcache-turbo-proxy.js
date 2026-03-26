@@ -12,14 +12,12 @@ const https = require('https')
 const fs = require('fs')
 const { URL } = require('url')
 
-// SCCACHE_TURBO_* env vars allow overriding the turbo API target for sccache
-// separately from TURBO_API (which may point at a self-hosted proxy with
-// different auth). Falls back to TURBO_* vars, then to vercel.com defaults.
-const TURBO_API =
-  process.env.SCCACHE_TURBO_API || process.env.TURBO_API || 'https://vercel.com'
-const TURBO_TOKEN = process.env.SCCACHE_TURBO_TOKEN || process.env.TURBO_TOKEN
-const TURBO_TEAM =
-  process.env.SCCACHE_TURBO_TEAM || process.env.TURBO_TEAM || 'vercel'
+// Use the same env vars as turbo CLI and ijjk/rust-cache.
+// On self-hosted runners, TURBO_API points to the self-hosted cache server
+// (set in bashrc). On GH-hosted runners, it defaults to vercel.com.
+const TURBO_API = process.env.TURBO_API || 'https://vercel.com'
+const TURBO_TOKEN = process.env.TURBO_TOKEN
+const TURBO_TEAM = process.env.TURBO_TEAM
 const PORT = parseInt(process.env.SCCACHE_TURBO_PROXY_PORT || '18080', 10)
 const os = require('os')
 const tmpDir = process.env.RUNNER_TEMP || os.tmpdir()
@@ -46,29 +44,26 @@ function extractKey(urlPath) {
 
 function turboFetch(method, key, body) {
   return new Promise((resolve, reject) => {
-    // Turbo cache API: /v8/artifacts/{key} with Bearer auth.
-    // Include teamId and slug for self-hosted turbo cache server compatibility.
-    const qs = new URLSearchParams()
-    if (TURBO_TEAM) {
-      qs.set('teamId', TURBO_TEAM)
-      qs.set('slug', TURBO_TEAM)
-    }
-    const qstr = qs.toString() ? `?${qs.toString()}` : ''
-    const turboPath = `/v8/artifacts/${encodeURIComponent(key)}${qstr}`
+    // Match ijjk/rust-cache format exactly:
+    //   /v8/artifacts/{key}?slug={team}
+    //   Authorization: Bearer {token}
+    const slug = TURBO_TEAM ? `?slug=${TURBO_TEAM}` : ''
+    const turboPath = `/v8/artifacts/${encodeURIComponent(key)}${slug}`
     const parsed = new URL(turboPath, TURBO_API)
+    const headers = {
+      Authorization: `Bearer ${TURBO_TOKEN}`,
+    }
+    if (body) {
+      headers['Content-Type'] = 'application/octet-stream'
+      headers['Content-Length'] = body.length
+    }
     const opts = {
       hostname: parsed.hostname,
       port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
       path: parsed.pathname + parsed.search,
       method,
-      headers: {
-        Authorization: `Bearer ${TURBO_TOKEN}`,
-        'Content-Type': 'application/octet-stream',
-        'User-Agent': 'sccache-turbo-proxy',
-        Accept: '*/*',
-      },
+      headers,
     }
-    if (body) opts.headers['Content-Length'] = body.length
 
     const req = remoteModule.request(opts, (res) => {
       const chunks = []
