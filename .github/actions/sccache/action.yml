@@ -4,6 +4,10 @@ inputs:
   mode:
     description: '"start" to launch proxy + sccache, "stop" to print stats and shut down'
     required: true
+  turbo-api:
+    description: 'Override TURBO_API for sccache proxy (use when workflow overrides TURBO_TOKEN with a Vercel token but runner bashrc has a self-hosted TURBO_API)'
+    required: false
+    default: ''
   base-dir:
     description: 'SCCACHE_BASE_DIR for path normalization (default: $GITHUB_WORKSPACE)'
     required: false
@@ -21,8 +25,14 @@ runs:
       if: ${{ inputs.mode == 'start' }}
       shell: bash
       run: |
-        # Verify turbo API connectivity (must succeed or the build fails).
-        # Uses TURBO_API/TURBO_TOKEN/TURBO_TEAM from the runner's environment.
+        # Override TURBO_API if the caller specified one (needed when the workflow
+        # overrides TURBO_TOKEN with a Vercel token but the runner's bashrc points
+        # TURBO_API at a self-hosted server that doesn't accept Vercel tokens).
+        if [ -n "${{ inputs.turbo-api }}" ]; then
+          export TURBO_API="${{ inputs.turbo-api }}"
+        fi
+
+        # Verify turbo API connectivity (must succeed or the build fails)
         node scripts/memcache-turbo-proxy.js --test
 
         # Start proxy in background

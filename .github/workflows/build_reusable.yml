@@ -257,11 +257,15 @@ jobs:
       - run: node scripts/normalize-version-bump.js
         name: normalize versions
 
-      # sccache for per-crate caching via turbo remote cache
+      # sccache for per-crate caching via turbo remote cache.
+      # TURBO_TOKEN is overridden with TURBO_REMOTE_CACHE_TOKEN (a Vercel token),
+      # but self-hosted runners set TURBO_API to a non-Vercel server in bashrc.
+      # Force vercel.com so the token matches the endpoint.
       - uses: ./.github/actions/sccache
         if: ${{ inputs.skipNativeBuild != 'yes' || inputs.needsNextest == 'yes' || inputs.needsRust == 'yes' }}
         with:
           mode: start
+          turbo-api: 'https://vercel.com'
 
       - run: pnpm dlx turbo@${TURBO_VERSION} run build-native-${{ inputs.rustBuildProfile }} ${TURBO_ARGS} --summarize -- --target ${{ inputs.buildNativeTarget }}
         if: ${{ inputs.skipNativeBuild != 'yes' }}
