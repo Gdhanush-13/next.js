@@ -247,9 +247,7 @@ jobs:
       # Docker: build/restore image, start sccache proxy, build with sccache inside container
       - name: Build/restore Docker image
         if: ${{ matrix.docker }}
-        run: |
-          pnpm dlx turbo@${TURBO_VERSION} run build-docker-image --remote-cache-timeout 300 --log-order stream
-          node scripts/docker-image-cache.js --load
+        run: node scripts/docker-image-cache.js
 
       - name: Start sccache proxy for docker
         if: ${{ matrix.docker }}

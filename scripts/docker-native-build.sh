@@ -116,11 +116,19 @@ if [ "$ARCH" = "aarch64" ]; then
   export JEMALLOC_SYS_WITH_LG_PAGE=16
 fi
 
+# Verify sccache is available if RUSTC_WRAPPER is set to it.
+# Cached docker images may not have sccache installed yet.
+if [ "${RUSTC_WRAPPER:-}" = "sccache" ] && ! command -v sccache &>/dev/null; then
+  echo "WARNING: RUSTC_WRAPPER=sccache but sccache not found — disabling"
+  unset RUSTC_WRAPPER
+fi
+
 echo "--- Build environment ---"
 node -v
 rustc --version
 echo "Target: $TARGET"
 echo "RUSTFLAGS: $RUSTFLAGS"
+echo "RUSTC_WRAPPER: ${RUSTC_WRAPPER:-<unset>}"
 echo "-------------------------"
 
 rustup target add "$TARGET"
