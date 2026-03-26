@@ -64,7 +64,9 @@ const server = http.createServer(async (req, res) => {
           res.writeHead(201)
         } catch (e) {
           stats.errors++
-          log(`PUT ${rawPath} -> ERROR: ${e.message}`)
+          const msg = `PUT ${rawPath} -> ERROR (${body.length} bytes): ${e.message}`
+          log(msg)
+          console.error(msg)
           res.writeHead(502)
         }
         res.end()
