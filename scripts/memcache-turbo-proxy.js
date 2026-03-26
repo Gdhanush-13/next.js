@@ -33,8 +33,12 @@ function log(msg) {
   logStream.write(`${new Date().toISOString()} ${msg}\n`)
 }
 
+// Convert a WebDAV URL path into a turbo cache key.
+// Turbo cache requires hex-only keys (^[a-fA-F0-9]+$), so we SHA256 hash
+// the path to produce a valid key.
 function extractKey(urlPath) {
-  return urlPath.replace(/^\/+/, '').replace(/\//g, '-')
+  const raw = urlPath.replace(/^\/+/, '')
+  return require('crypto').createHash('sha256').update(raw).digest('hex')
 }
 
 // Turbo cache API path prefix. turbo CLI uses /v8/artifacts/, but the
@@ -74,7 +78,11 @@ async function turboFetch(method, key, body) {
 // alternate prefixes (/v8/artifacts, /artifacts) since the API spec
 // is ambiguous about the prefix.
 async function healthCheck() {
-  const testKey = `sccache-health-check-${Date.now()}`
+  // Turbo cache keys must be hex-only (^[a-fA-F0-9]+$)
+  const testKey = require('crypto')
+    .createHash('sha256')
+    .update(`sccache-health-check-${Date.now()}`)
+    .digest('hex')
   const slug = TURBO_TEAM ? `?slug=${TURBO_TEAM}` : ''
 
   console.error(`Health check:`)

@@ -39,12 +39,15 @@ const TURBO_TOKEN = process.env.TURBO_TOKEN
 const TURBO_TEAM = process.env.TURBO_TEAM
 
 function computeCacheKey() {
+  // Turbo cache keys must be hex-only (^[a-fA-F0-9]+$).
+  // We hash a version prefix + file contents to produce a valid key.
   const hash = createHash('sha256')
+  hash.update('docker-image-v2\0')
   for (const file of CACHE_INPUTS) {
     hash.update(file + '\0')
     hash.update(fs.readFileSync(file))
   }
-  return `docker-image-v2-${hash.digest('hex').slice(0, 32)}`
+  return hash.digest('hex')
 }
 
 function turboUrl(key) {
