@@ -55,14 +55,14 @@ async function turboFetch(method, key, body) {
   return { status: res.status, body: buf }
 }
 
-// Verify turbo API connectivity before starting the server.
-// A HEAD on a non-existent key should return 404 (not 403).
+// Verify turbo API connectivity with read AND write access.
 async function healthCheck() {
   const testKey = `sccache-health-check-${Date.now()}`
   const slug = TURBO_TEAM ? `?slug=${TURBO_TEAM}` : ''
   const url = `${TURBO_API}/v8/artifacts/${testKey}${slug}`
+  const authHeaders = { Authorization: `Bearer ${TURBO_TOKEN}` }
 
-  console.error(`Health check: HEAD ${url}`)
+  console.error(`Health check: ${url}`)
   console.error(`  TURBO_API: ${TURBO_API}`)
   console.error(`  TURBO_TEAM: ${TURBO_TEAM}`)
   console.error(
@@ -70,43 +70,66 @@ async function healthCheck() {
   )
 
   try {
-    // Try HEAD first, then GET if HEAD fails (some servers handle them differently)
-    for (const method of ['HEAD', 'GET']) {
-      const res = await fetch(url, {
-        method,
-        headers: { Authorization: `Bearer ${TURBO_TOKEN}` },
-      })
-
-      console.error(`  ${method} -> ${res.status} ${res.statusText}`)
-      // Log response headers for debugging
-      for (const [k, v] of res.headers) {
-        console.error(`    ${k}: ${v}`)
-      }
-
-      if (res.status === 404 || res.status === 200) {
-        log(`Health check OK: ${method} ${testKey} -> ${res.status}`)
-        return true
-      }
-
-      // Consume body to avoid leaking
-      const body = await res.text()
-      if (body) console.error(`  Body: ${body.slice(0, 200)}`)
+    // 1. READ test: HEAD on a non-existent key should return 404 (not 403)
+    const headRes = await fetch(url, { method: 'HEAD', headers: authHeaders })
+    console.error(`  READ test:  HEAD -> ${headRes.status} ${headRes.statusText}`)
+    for (const [k, v] of headRes.headers) {
+      console.error(`    ${k}: ${v}`)
     }
 
-    // Also try the /v8/artifacts/status endpoint that turbo CLI checks
-    const statusUrl = `${TURBO_API}/v8/artifacts/status${slug}`
-    console.error(`  Trying status endpoint: GET ${statusUrl}`)
-    const statusRes = await fetch(statusUrl, {
-      headers: {
-        Authorization: `Bearer ${TURBO_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-    })
-    console.error(`  Status endpoint -> ${statusRes.status}`)
-    const statusBody = await statusRes.text()
-    if (statusBody) console.error(`  Status body: ${statusBody.slice(0, 200)}`)
+    if (headRes.status === 403) {
+      const body = await headRes.text()
+      console.error(`  Body: ${body.slice(0, 200)}`)
+      console.error('  FAIL: 403 on read — token has no cache access')
+      return false
+    }
+    if (headRes.status !== 404 && headRes.status !== 200) {
+      const body = await headRes.text()
+      console.error(`  Body: ${body.slice(0, 200)}`)
+      console.error(`  FAIL: unexpected status ${headRes.status} (expected 404)`)
+      return false
+    }
 
-    return false
+    // 2. WRITE test: PUT a small test value
+    const testBody = Buffer.from('sccache-write-test')
+    const putRes = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        ...authHeaders,
+        'Content-Type': 'application/octet-stream',
+        'Content-Length': String(testBody.length),
+      },
+      body: testBody,
+    })
+    console.error(`  WRITE test: PUT -> ${putRes.status} ${putRes.statusText}`)
+    for (const [k, v] of putRes.headers) {
+      console.error(`    ${k}: ${v}`)
+    }
+
+    if (!putRes.ok) {
+      const body = await putRes.text()
+      console.error(`  Body: ${body.slice(0, 200)}`)
+      console.error('  FAIL: cannot write to turbo cache — check token permissions')
+      return false
+    }
+
+    // 3. Verify: GET the value back
+    const getRes = await fetch(url, { method: 'GET', headers: authHeaders })
+    console.error(`  VERIFY:     GET -> ${getRes.status} ${getRes.statusText}`)
+
+    if (getRes.ok) {
+      const data = Buffer.from(await getRes.arrayBuffer())
+      if (data.equals(testBody)) {
+        console.error('  OK: read/write verified')
+      } else {
+        console.error(
+          `  WARN: data mismatch (wrote ${testBody.length}B, read ${data.length}B)`
+        )
+      }
+    }
+
+    log(`Health check OK: read+write verified for ${testKey}`)
+    return true
   } catch (e) {
     console.error(`Turbo API health check error: ${e.message}`)
     return false
