@@ -5,13 +5,16 @@
 //
 // Computes a cache key from the Dockerfile + rust-toolchain.toml contents,
 // then checks the turbo cache API directly (no turbo task dependency).
+// Images are compressed with zstd before upload (~2.8GB → ~500MB).
 //
 // Usage:
 //   node scripts/docker-image-cache.js           # restore from cache or build + upload
 //   node scripts/docker-image-cache.js --force   # always rebuild and re-upload
 
-const { execSync } = require('child_process')
+const { execSync, spawn } = require('child_process')
 const { createHash } = require('crypto')
+const { pipeline } = require('stream/promises')
+const { Readable } = require('stream')
 const path = require('path')
 const fs = require('fs')
 const os = require('os')
@@ -44,7 +47,7 @@ function computeCacheKey() {
     hash.update(file + '\0')
     hash.update(fs.readFileSync(file))
   }
-  return `docker-image-v1-${hash.digest('hex').slice(0, 32)}`
+  return `docker-image-v2-${hash.digest('hex').slice(0, 32)}`
 }
 
 function turboUrl(key) {
@@ -78,6 +81,10 @@ function buildImage() {
   }
 }
 
+function tmpFile(name) {
+  return path.join(process.env.RUNNER_TEMP || os.tmpdir(), name)
+}
+
 async function main() {
   const key = computeCacheKey()
   console.log(`Docker image cache key: ${key}`)
@@ -104,17 +111,22 @@ async function main() {
       })
 
       if (getRes.ok && getRes.body) {
-        // Pipe the response body directly into docker load
-        const tmpTar = path.join(
-          process.env.RUNNER_TEMP || os.tmpdir(),
-          'docker-image-cache.tar'
-        )
-        const buf = Buffer.from(await getRes.arrayBuffer())
-        fs.writeFileSync(tmpTar, buf)
-        console.log(`Downloaded ${(buf.length / 1024 / 1024).toFixed(0)} MB`)
+        // Download compressed image, decompress with zstd, load into docker
+        const zstdFile = tmpFile('docker-image-cache.tar.zst')
+        const writeStream = fs.createWriteStream(zstdFile)
+        await pipeline(Readable.fromWeb(getRes.body), writeStream)
 
-        execSync(`docker load -i ${tmpTar}`, { stdio: 'inherit' })
-        fs.unlinkSync(tmpTar)
+        const size = fs.statSync(zstdFile).size
+        console.log(
+          `Downloaded ${(size / 1024 / 1024).toFixed(0)} MB compressed`
+        )
+
+        // zstd -d | docker load
+        execSync(`zstd -d -c ${zstdFile} | docker load`, {
+          stdio: 'inherit',
+          shell: true,
+        })
+        fs.unlinkSync(zstdFile)
         console.log('Docker image restored from turbo cache')
         return
       }
@@ -129,27 +141,33 @@ async function main() {
     buildImage()
   }
 
-  // Upload to cache
-  console.log('Uploading docker image to turbo cache...')
-  const tmpTar = path.join(
-    process.env.RUNNER_TEMP || os.tmpdir(),
-    'docker-image-cache.tar'
-  )
-  execSync(`docker save ${IMAGE_NAME} -o ${tmpTar}`, { stdio: 'inherit' })
-  const body = fs.readFileSync(tmpTar)
-  console.log(`Uploading ${(body.length / 1024 / 1024).toFixed(0)} MB...`)
+  // Compress and upload: docker save | zstd > file, then upload
+  console.log('Compressing docker image with zstd...')
+  const zstdFile = tmpFile('docker-image-cache.tar.zst')
+  execSync(`docker save ${IMAGE_NAME} | zstd -3 -T0 -o ${zstdFile}`, {
+    stdio: 'inherit',
+    shell: true,
+  })
 
+  const size = fs.statSync(zstdFile).size
+  console.log(
+    `Compressed: ${(size / 1024 / 1024).toFixed(0)} MB — uploading...`
+  )
+
+  // Stream upload to avoid 2GB Buffer limit
+  const bodyStream = Readable.toWeb(fs.createReadStream(zstdFile))
   const putRes = await fetch(turboUrl(key), {
     method: 'PUT',
     headers: {
       Authorization: `Bearer ${TURBO_TOKEN}`,
       'Content-Type': 'application/octet-stream',
-      'Content-Length': String(body.length),
+      'Content-Length': String(size),
     },
-    body,
+    body: bodyStream,
+    duplex: 'half',
   })
 
-  fs.unlinkSync(tmpTar)
+  fs.unlinkSync(zstdFile)
 
   if (putRes.ok) {
     console.log('Docker image uploaded to turbo cache')
