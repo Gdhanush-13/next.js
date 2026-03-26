@@ -1,3 +1,4 @@
+use core::task;
 use std::{
     cell::Cell,
     hash::Hash,
@@ -141,6 +142,22 @@ impl Storage {
                     // is valid.
                     let (key, shared_value) = unsafe { bucket.as_mut() };
                     let flags = &shared_value.get().flags;
+                    if key.is_transient() {
+                        if flags.any_modified() {
+                            panic!(
+                                "found a modified transient task: {:?}",
+                                shared_value.get().get_transient_task_type()
+                            );
+                        }
+                        if flags.new_persistent_task() {
+                            panic!(
+                                "found a new_persistent_task transient task: {:?} {:?}",
+                                shared_value.get().get_transient_task_type(),
+                                shared_value.get().get_persistent_task_type()
+                            );
+                        }
+                        continue;
+                    }
                     if flags.any_modified() || flags.new_persistent_task() {
                         if let Some(mut snapshot) = self.snapshots.get_mut(key) {
                             if let Some(snapshot) = snapshot.take() {
