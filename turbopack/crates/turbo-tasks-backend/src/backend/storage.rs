@@ -1,4 +1,3 @@
-use core::task;
 use std::{
     cell::Cell,
     hash::Hash,
@@ -142,23 +141,18 @@ impl Storage {
                     // is valid.
                     let (key, shared_value) = unsafe { bucket.as_mut() };
                     let flags = &shared_value.get().flags;
-                    if key.is_transient() {
-                        if flags.any_modified() {
-                            panic!(
-                                "found a modified transient task: {:?}",
-                                shared_value.get().get_transient_task_type()
-                            );
-                        }
-                        if flags.new_persistent_task() {
-                            panic!(
-                                "found a new_persistent_task transient task: {:?} {:?}",
-                                shared_value.get().get_transient_task_type(),
-                                shared_value.get().get_persistent_task_type()
-                            );
-                        }
-                        continue;
-                    }
-                    if flags.any_modified() || flags.new_persistent_task() {
+                    // Only check modified flags here — transient tasks never have
+                    // modified flags set (track_modification guards against it), so
+                    // this naturally excludes them. new_persistent_task is always
+                    // accompanied by modified flags (init_new_persistent_task calls
+                    // track_modification), so any_modified() is sufficient.
+                    if flags.any_modified() {
+                        debug_assert!(
+                            !key.is_transient(),
+                            "found a modified transient task: {:?}",
+                            shared_value.get().get_persistent_task_type()
+                        );
+
                         if let Some(mut snapshot) = self.snapshots.get_mut(key) {
                             if let Some(snapshot) = snapshot.take() {
                                 direct_snapshots.push((*key, snapshot));

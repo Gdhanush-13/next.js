@@ -717,28 +717,33 @@ pub trait TaskGuard: Debug + TaskStorageAccessors {
         new_value
     }
 
-    /// Initialize a new persistent task with the given task type.
+    /// Initialize a new task with the given cacheable task type.
     ///
-    /// Note: track_modification_internal early-returns when persistent_task_type
-    /// is None, so any modifications before set_persistent_task_type are no-ops.
-    /// This ensures the task is only added to the modified list once the task_type
-    /// is set and a snapshot copy would include it.
-    fn init_new_persistent_task(&mut self, task_type: Arc<CachedTaskType>) {
-        let flags = &mut self.typed_mut().flags;
-        // mark as `new` so it gets written to the task cache
-        flags.set_new_persistent_task(true);
-        // mark as restored so we don't do db queries for it
-        flags.set_restored(TaskDataCategory::All);
+    /// Sets the persistent task type (which identifies the task type for caching,
+    /// regardless of whether the task itself is transient or persistent).
+    ///
+    /// For persistent tasks, also marks the task as new/modified/restored so it
+    /// gets written to the backing storage. For transient tasks, only the task
+    /// type is set (no persistence tracking needed).
+    fn init_new_task(&mut self, task_type: Arc<CachedTaskType>) {
         // Set the task type directly on the storage, bypassing the generated setter
         // which would call track_modification before the field is set (causing an
         // early return since persistent_task_type is still None). We then explicitly
         // track both categories after the field is set.
         self.typed_mut().set_persistent_task_type(task_type);
-        self.track_modification(SpecificTaskDataCategory::Data, "init_persistent_task");
-        // Calling track_modification for Meta is potentially wasteful, but it would be unusual to
-        // have data with no meta, so we can eagerly set this and at worst serialized a very small
-        // bit of data in the Meta table.
-        self.track_modification(SpecificTaskDataCategory::Meta, "init_persistent_task");
+        let is_transient = self.id().is_transient();
+        // mark as restored so we don't do db queries for it
+        let flags = &mut self.typed_mut().flags;
+        flags.set_restored(TaskDataCategory::All);
+        if !is_transient {
+            // mark as `new` so it gets written to the task cache
+            flags.set_new_persistent_task(true);
+            self.track_modification(SpecificTaskDataCategory::Data, "init_new_task");
+            // Calling track_modification for Meta is potentially wasteful, but it would be
+            // unusual to have data with no meta, so we can eagerly set this and at worst
+            // serialize a very small bit of data in the Meta table.
+            self.track_modification(SpecificTaskDataCategory::Meta, "init_new_task");
+        }
     }
 
     fn invalidate_serialization(&mut self);
