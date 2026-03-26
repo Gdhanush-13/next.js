@@ -12,9 +12,14 @@ const https = require('https')
 const fs = require('fs')
 const { URL } = require('url')
 
-const TURBO_API = process.env.TURBO_API || 'https://vercel.com'
-const TURBO_TOKEN = process.env.TURBO_TOKEN
-const TURBO_TEAM = process.env.TURBO_TEAM || 'vercel'
+// SCCACHE_TURBO_* env vars allow overriding the turbo API target for sccache
+// separately from TURBO_API (which may point at a self-hosted proxy with
+// different auth). Falls back to TURBO_* vars, then to vercel.com defaults.
+const TURBO_API =
+  process.env.SCCACHE_TURBO_API || process.env.TURBO_API || 'https://vercel.com'
+const TURBO_TOKEN = process.env.SCCACHE_TURBO_TOKEN || process.env.TURBO_TOKEN
+const TURBO_TEAM =
+  process.env.SCCACHE_TURBO_TEAM || process.env.TURBO_TEAM || 'vercel'
 const PORT = parseInt(process.env.SCCACHE_TURBO_PROXY_PORT || '18080', 10)
 const os = require('os')
 const tmpDir = process.env.RUNNER_TEMP || os.tmpdir()
