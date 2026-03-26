@@ -31,7 +31,8 @@ function extractKey(urlPath) {
 }
 
 const server = http.createServer(async (req, res) => {
-  const key = extractKey(req.url)
+  const rawPath = req.url
+  const key = extractKey(rawPath)
   const method = req.method.toUpperCase()
   const shortKey = key.slice(0, 16)
 
@@ -41,12 +42,12 @@ const server = http.createServer(async (req, res) => {
       const data = await cache.get(key)
       if (data) {
         stats.hits++
-        log(`GET ${shortKey} -> HIT (${data.length} bytes)`)
+        log(`GET ${rawPath} -> HIT (${data.length} bytes)`)
         res.writeHead(200, { 'Content-Length': data.length })
         res.end(data)
       } else {
         stats.misses++
-        log(`GET ${shortKey} -> MISS`)
+        log(`GET ${rawPath} -> MISS`)
         res.writeHead(404)
         res.end()
       }
@@ -59,11 +60,11 @@ const server = http.createServer(async (req, res) => {
         stats.putBytes += body.length
         try {
           await cache.put(key, body)
-          log(`PUT ${shortKey} -> OK (${body.length} bytes)`)
+          log(`PUT ${rawPath} -> OK (${body.length} bytes)`)
           res.writeHead(201)
         } catch (e) {
           stats.errors++
-          log(`PUT ${shortKey} -> ERROR: ${e.message}`)
+          log(`PUT ${rawPath} -> ERROR: ${e.message}`)
           res.writeHead(502)
         }
         res.end()
@@ -71,10 +72,11 @@ const server = http.createServer(async (req, res) => {
       return
     } else if (method === 'PROPFIND' || method === 'HEAD') {
       // Always return 207 (exists) for PROPFIND. sccache's WebDAV client
-      // PROPFINDs parent directories before checking the actual entry,
-      // generating 3-4 round-trips per lookup. By always saying "exists",
-      // sccache goes straight to GET (1 round-trip, returns 404 on miss).
-      const xml = `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:href>${req.url}</d:href><d:propstat><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`
+      // may check parent directories before the actual entry. By always
+      // saying "exists", sccache goes straight to GET (which returns 404
+      // on miss), reducing round-trips.
+      log(`PROPFIND ${rawPath} -> 207`)
+      const xml = `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:href>${rawPath}</d:href><d:propstat><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`
       res.writeHead(207, {
         'Content-Type': 'application/xml',
         'Content-Length': Buffer.byteLength(xml),
