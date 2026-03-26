@@ -4,13 +4,11 @@
 // sccache uses WebDAV as a storage backend (PUT/GET/PROPFIND).
 // This proxy translates those to turbo's REST API (PUT/GET/HEAD on /v8/artifacts/{key}).
 //
-// All operations are logged to /tmp/sccache-turbo-proxy.log for debugging.
+// All operations are logged to $RUNNER_TEMP/sccache-turbo-proxy.log for debugging.
 // The last 50 operations are printed on shutdown.
 
 const http = require('http')
-const https = require('https')
 const fs = require('fs')
-const { URL } = require('url')
 
 // Use the same env vars as turbo CLI and ijjk/rust-cache.
 // On self-hosted runners, TURBO_API points to the self-hosted cache server
@@ -28,9 +26,6 @@ if (!TURBO_TOKEN) {
   process.exit(1)
 }
 
-const apiUrl = new URL(TURBO_API)
-const remoteModule = apiUrl.protocol === 'https:' ? https : http
-
 let stats = { gets: 0, puts: 0, hits: 0, misses: 0, errors: 0, putBytes: 0 }
 const logStream = fs.createWriteStream(LOG_FILE, { flags: 'w' })
 
@@ -42,66 +37,76 @@ function extractKey(urlPath) {
   return urlPath.replace(/^\/+/, '').replace(/\//g, '-')
 }
 
-function turboFetch(method, key, body) {
-  return new Promise((resolve, reject) => {
-    // Match ijjk/rust-cache format exactly:
-    //   /v8/artifacts/{key}?slug={team}
-    //   Authorization: Bearer {token}
-    const slug = TURBO_TEAM ? `?slug=${TURBO_TEAM}` : ''
-    const turboPath = `/v8/artifacts/${encodeURIComponent(key)}${slug}`
-    const parsed = new URL(turboPath, TURBO_API)
-    const headers = {
-      Authorization: `Bearer ${TURBO_TOKEN}`,
-    }
-    if (body) {
-      headers['Content-Type'] = 'application/octet-stream'
-      headers['Content-Length'] = body.length
-    }
-    const opts = {
-      hostname: parsed.hostname,
-      port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
-      path: parsed.pathname + parsed.search,
-      method,
-      headers,
-    }
-
-    const req = remoteModule.request(opts, (res) => {
-      const chunks = []
-      res.on('data', (c) => chunks.push(c))
-      res.on('end', () =>
-        resolve({ status: res.statusCode, body: Buffer.concat(chunks) })
-      )
-    })
-    req.on('error', reject)
-    if (body) req.write(body)
-    req.end()
-  })
+// Use global fetch() (Node 18+) to match the HTTP behavior of node-fetch/reqwest
+// that turbo CLI and ijjk/rust-cache use. This sends proper User-Agent, Accept,
+// and other standard HTTP headers that raw http.request omits.
+async function turboFetch(method, key, body) {
+  const slug = TURBO_TEAM ? `?slug=${TURBO_TEAM}` : ''
+  const url = `${TURBO_API}/v8/artifacts/${encodeURIComponent(key)}${slug}`
+  const headers = {
+    Authorization: `Bearer ${TURBO_TOKEN}`,
+  }
+  if (body) {
+    headers['Content-Type'] = 'application/octet-stream'
+    headers['Content-Length'] = String(body.length)
+  }
+  const res = await fetch(url, { method, headers, body: body || undefined })
+  const buf = Buffer.from(await res.arrayBuffer())
+  return { status: res.status, body: buf }
 }
 
 // Verify turbo API connectivity before starting the server.
-// A GET on a non-existent key should return 404 (not 403).
+// A HEAD on a non-existent key should return 404 (not 403).
 async function healthCheck() {
   const testKey = `sccache-health-check-${Date.now()}`
+  const slug = TURBO_TEAM ? `?slug=${TURBO_TEAM}` : ''
+  const url = `${TURBO_API}/v8/artifacts/${testKey}${slug}`
+
+  console.error(`Health check: HEAD ${url}`)
+  console.error(`  TURBO_API: ${TURBO_API}`)
+  console.error(`  TURBO_TEAM: ${TURBO_TEAM}`)
+  console.error(
+    `  TURBO_TOKEN: ${TURBO_TOKEN ? TURBO_TOKEN.slice(0, 8) + '...' : '(not set)'}`
+  )
+
   try {
-    const r = await turboFetch('HEAD', testKey)
-    if (r.status === 404 || r.status === 200) {
-      log(`Health check OK: HEAD ${testKey} -> ${r.status}`)
-      return true
-    } else {
-      console.error(
-        `Turbo API health check failed: HEAD ${testKey} -> ${r.status} (expected 404)`
-      )
-      console.error(`  TURBO_API: ${TURBO_API}`)
-      console.error(`  TURBO_TEAM: ${TURBO_TEAM}`)
-      console.error(
-        `  TURBO_TOKEN: ${TURBO_TOKEN ? TURBO_TOKEN.slice(0, 8) + '...' : '(not set)'}`
-      )
-      console.error(
-        `  Full URL: ${TURBO_API}/v8/artifacts/${testKey}${TURBO_TEAM ? '?slug=' + TURBO_TEAM : ''}`
-      )
-      console.error(`  Response: ${r.body.toString().slice(0, 200)}`)
-      return false
+    // Try HEAD first, then GET if HEAD fails (some servers handle them differently)
+    for (const method of ['HEAD', 'GET']) {
+      const res = await fetch(url, {
+        method,
+        headers: { Authorization: `Bearer ${TURBO_TOKEN}` },
+      })
+
+      console.error(`  ${method} -> ${res.status} ${res.statusText}`)
+      // Log response headers for debugging
+      for (const [k, v] of res.headers) {
+        console.error(`    ${k}: ${v}`)
+      }
+
+      if (res.status === 404 || res.status === 200) {
+        log(`Health check OK: ${method} ${testKey} -> ${res.status}`)
+        return true
+      }
+
+      // Consume body to avoid leaking
+      const body = await res.text()
+      if (body) console.error(`  Body: ${body.slice(0, 200)}`)
     }
+
+    // Also try the /v8/artifacts/status endpoint that turbo CLI checks
+    const statusUrl = `${TURBO_API}/v8/artifacts/status${slug}`
+    console.error(`  Trying status endpoint: GET ${statusUrl}`)
+    const statusRes = await fetch(statusUrl, {
+      headers: {
+        Authorization: `Bearer ${TURBO_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+    })
+    console.error(`  Status endpoint -> ${statusRes.status}`)
+    const statusBody = await statusRes.text()
+    if (statusBody) console.error(`  Status body: ${statusBody.slice(0, 200)}`)
+
+    return false
   } catch (e) {
     console.error(`Turbo API health check error: ${e.message}`)
     return false
