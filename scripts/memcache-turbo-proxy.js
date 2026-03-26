@@ -64,6 +64,8 @@ function turboFetch(method, key, body) {
       headers: {
         Authorization: `Bearer ${TURBO_TOKEN}`,
         'Content-Type': 'application/octet-stream',
+        'User-Agent': 'sccache-turbo-proxy',
+        Accept: '*/*',
       },
     }
     if (body) opts.headers['Content-Length'] = body.length
@@ -86,25 +88,22 @@ function turboFetch(method, key, body) {
 async function healthCheck() {
   const testKey = `sccache-health-check-${Date.now()}`
   try {
-    const r = await turboFetch('GET', testKey)
-    if (r.status === 404) {
-      log(`Health check OK: GET ${testKey} -> 404 (expected)`)
-      return true
-    } else if (r.status === 200) {
-      log(
-        `Health check OK: GET ${testKey} -> 200 (unexpected hit but API works)`
-      )
+    const r = await turboFetch('HEAD', testKey)
+    if (r.status === 404 || r.status === 200) {
+      log(`Health check OK: HEAD ${testKey} -> ${r.status}`)
       return true
     } else {
       console.error(
-        `Turbo API health check failed: GET ${testKey} -> ${r.status} (expected 404)`
+        `Turbo API health check failed: HEAD ${testKey} -> ${r.status} (expected 404)`
       )
       console.error(`  TURBO_API: ${TURBO_API}`)
       console.error(`  TURBO_TEAM: ${TURBO_TEAM}`)
       console.error(
         `  TURBO_TOKEN: ${TURBO_TOKEN ? TURBO_TOKEN.slice(0, 8) + '...' : '(not set)'}`
       )
-      console.error(`  Full URL: ${TURBO_API}/v8/artifacts/${testKey}`)
+      console.error(
+        `  Full URL: ${TURBO_API}/v8/artifacts/${testKey}${TURBO_TEAM ? '?slug=' + TURBO_TEAM : ''}`
+      )
       console.error(`  Response: ${r.body.toString().slice(0, 200)}`)
       return false
     }

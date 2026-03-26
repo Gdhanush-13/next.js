@@ -24,7 +24,7 @@ runs:
         # Verify turbo API connectivity (non-fatal — sccache falls back to local disk)
         node scripts/memcache-turbo-proxy.js --test || echo "WARNING: Turbo API check failed, sccache will attempt to use it anyway"
 
-        # Start proxy in background
+        # Start proxy in background (inherits SCCACHE_TURBO_API)
         node scripts/memcache-turbo-proxy.js &
         echo $! > ${RUNNER_TEMP}/sccache-turbo-proxy.pid
 
