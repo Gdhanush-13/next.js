@@ -73,18 +73,34 @@ const server = http.createServer(async (req, res) => {
       })
       return
     } else if (method === 'PROPFIND' || method === 'HEAD') {
-      // Always return 207 (exists) for PROPFIND. sccache's WebDAV client
-      // may check parent directories before the actual entry. By always
-      // saying "exists", sccache goes straight to GET (which returns 404
-      // on miss), reducing round-trips.
-      log(`PROPFIND ${rawPath} -> 207`)
-      const xml = `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:href>${rawPath}</d:href><d:propstat><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`
-      res.writeHead(207, {
-        'Content-Type': 'application/xml',
-        'Content-Length': Buffer.byteLength(xml),
-      })
-      res.end(xml)
+      // sccache's WebDAV write flow: PROPFIND dir → MKCOL dir → PUT file.
+      // For directories (short path segments), return 404 so sccache does
+      // MKCOL (which we accept). For actual cache files (long hash paths),
+      // return 207 to skip the exists check — GET will return 404 on miss.
+      //
+      // Directory paths look like: /sccache-v1/ or /sccache-v1/a/ or /sccache-v1/a/b/
+      // File paths look like:      /sccache-v1/a/b/c/<long-hash>
+      const segments = rawPath.replace(/^\/+|\/+$/g, '').split('/')
+      const lastSegment = segments[segments.length - 1] || ''
+      const isFile = lastSegment.length > 10 // hash segments are 40+ chars
+
+      if (isFile) {
+        // File path — always say exists, let GET determine hit/miss
+        log(`PROPFIND ${rawPath} -> 207 (file)`)
+        const xml = `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:href>${rawPath}</d:href><d:propstat><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`
+        res.writeHead(207, {
+          'Content-Type': 'application/xml',
+          'Content-Length': Buffer.byteLength(xml),
+        })
+        res.end(xml)
+      } else {
+        // Directory path — return 404 so sccache sends MKCOL
+        log(`PROPFIND ${rawPath} -> 404 (dir)`)
+        res.writeHead(404)
+        res.end()
+      }
     } else if (method === 'MKCOL') {
+      log(`MKCOL ${rawPath} -> 201`)
       res.writeHead(201)
       res.end()
     } else {
