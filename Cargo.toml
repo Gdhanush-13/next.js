@@ -78,9 +78,12 @@ overflow-checks = true
 # Thin-LTO can make the binary ~5-10% faster, but it can make our build take a
 # couple more minutes, so it's not worth it for most test scenarios.
 lto = false
-# More codegen units = faster compilation. Without LTO there's no cross-CGU
-# optimization recovery, but this profile prioritizes build speed over perf.
-codegen-units = 64
+# codegen-units=1 ensures deterministic rmeta output so sccache cache keys
+# are stable across builds. With codegen-units>1 + -Zshare-generics=y, the
+# assignment of monomorphized generics to CGUs is non-deterministic, causing
+# different rmeta bytes each build and cascading sccache misses.
+# See: https://github.com/rust-lang/rust/issues/128675
+codegen-units = 1
 
 [profile.release-with-debug]
 inherits = "release"
