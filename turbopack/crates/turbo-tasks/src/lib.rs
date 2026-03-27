@@ -1,4 +1,4 @@
-// sccache cache test 7
+// sccache cache test 8
 #![doc = include_str!("../README.md")]
 #![feature(trivial_bounds)]
 #![feature(min_specialization)]
