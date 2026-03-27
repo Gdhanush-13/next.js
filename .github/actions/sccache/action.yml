@@ -51,6 +51,9 @@ runs:
         echo "SCCACHE_BASE_DIR=${{ inputs.base-dir || github.workspace }}" >> $GITHUB_ENV
         echo "CARGO_INCREMENTAL=0" >> $GITHUB_ENV
         echo "SCCACHE_IDLE_TIMEOUT=0" >> $GITHUB_ENV
+        # Enable sccache debug logging to see cache key computation
+        echo "SCCACHE_LOG=sccache=debug" >> $GITHUB_ENV
+        echo "SCCACHE_ERROR_LOG=${RUNNER_TEMP}/sccache-debug.log" >> $GITHUB_ENV
 
     - name: Start sccache server
       if: ${{ inputs.mode == 'start' }}
@@ -75,6 +78,17 @@ runs:
           sleep 1
           rm -f ${RUNNER_TEMP}/sccache-turbo-proxy.pid
         fi
+        # Show sccache debug log — focus on cache misses to understand key differences
+        if [ -f ${RUNNER_TEMP}/sccache-debug.log ]; then
+          SLOG=${RUNNER_TEMP}/sccache-debug.log
+          echo "=== sccache debug log: line count ==="
+          wc -l "$SLOG"
+          echo "=== sccache debug log: full ==="
+          cat "$SLOG"
+        else
+          echo "=== sccache debug log: NOT FOUND ==="
+        fi
+
         # Show proxy log
         if [ -f ${RUNNER_TEMP}/sccache-turbo-proxy.log ]; then
           LOGF=${RUNNER_TEMP}/sccache-turbo-proxy.log
@@ -86,6 +100,10 @@ runs:
           grep ' PUT ' "$LOGF" | tail -20 || echo "(no PUTs found)"
           echo "=== proxy log: ERROR lines ==="
           grep -i 'ERROR' "$LOGF" | tail -20 || echo "(no errors)"
+          echo "=== proxy log: GET results summary ==="
+          grep ' GET ' "$LOGF" | sed 's/.* -> //' | sort | uniq -c | sort -rn || true
           echo "=== proxy log: last 100 ==="
           tail -100 "$LOGF"
+          echo "=== proxy log: full log ==="
+          cat "$LOGF"
         fi
