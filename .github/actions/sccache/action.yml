@@ -56,8 +56,10 @@ runs:
       if: ${{ inputs.mode == 'start' }}
       shell: bash
       run: |
+        echo "SCCACHE_BASE_DIR=${SCCACHE_BASE_DIR}"
+        echo "SCCACHE_WEBDAV_ENDPOINT=${SCCACHE_WEBDAV_ENDPOINT}"
         sccache --start-server 2>&1 || echo "sccache server may already be running"
-        sccache --show-stats 2>&1 | grep "Cache location"
+        sccache --show-stats 2>&1 | head -20
 
     - name: Stop sccache + show stats
       if: ${{ inputs.mode == 'stop' }}
